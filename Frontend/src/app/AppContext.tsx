@@ -94,12 +94,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  // Preserve guest data in local storage only when unauthenticated
+  // Preserve guest data in local storage only when unauthenticated and initial auth restoration has completed
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser && !isAuthLoading) {
       repository.save(data);
     }
-  }, [data, currentUser]);
+  }, [data, currentUser, isAuthLoading]);
 
   const pushToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = makeId();
@@ -108,36 +108,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const removeToast = useCallback((id: string) => setToasts((current) => current.filter((item) => item.id !== id)), []);
-
-  // Attempt session restoration on initial mount using silent refresh
-  useEffect(() => {
-    let active = true;
-    authApi.refresh()
-      .then((res) => {
-        if (active && res?.user) {
-          setCurrentUser(res.user);
-        }
-      })
-      .catch(() => {
-        // Guest mode continues
-      })
-      .finally(() => {
-        if (active) setIsAuthLoading(false);
-      });
-
-    setOnSessionExpired(() => {
-      if (active) {
-        setCurrentUser(null);
-        setDailySummary(null);
-        pushToast({ tone: 'info', title: 'Session expired', detail: 'Please sign in again to sync with your account.' });
-      }
-    });
-
-    return () => {
-      active = false;
-      setOnSessionExpired(null);
-    };
-  }, [pushToast]);
 
   // Synchronize Profile & Goals whenever user is authenticated
   const refreshProfileAndGoals = useCallback(async () => {
@@ -164,6 +134,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Keep existing state on error
     }
   }, []);
+
+  // Attempt session restoration on initial mount using silent refresh
+  useEffect(() => {
+    let active = true;
+    authApi.refresh()
+      .then(async (res) => {
+        if (active && res?.user) {
+          setCurrentUser(res.user);
+          // Eagerly prefetch profile and goals so user sees them immediately upon session restoration
+          await refreshProfileAndGoals();
+        }
+      })
+      .catch(() => {
+        // Guest mode continues
+      })
+      .finally(() => {
+        if (active) setIsAuthLoading(false);
+      });
+
+    setOnSessionExpired(() => {
+      if (active) {
+        setCurrentUser(null);
+        setDailySummary(null);
+        pushToast({ tone: 'info', title: 'Session expired', detail: 'Please sign in again to sync with your account.' });
+      }
+    });
+
+    return () => {
+      active = false;
+      setOnSessionExpired(null);
+    };
+  }, [pushToast, refreshProfileAndGoals]);
 
   // Synchronize Food Entries and Daily Nutrition Summary
   const refreshFoodAndSummary = useCallback(async (targetDate?: string) => {

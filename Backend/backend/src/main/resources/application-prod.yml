@@ -39,7 +39,8 @@ management:
 nutritrack:
   refresh-token:
     cookie-secure: true                 # Enforces Secure flag for HTTPS
-    cookie-same-site: ${REFRESH_COOKIE_SAMESITE:Strict}
+    cookie-same-site: ${REFRESH_COOKIE_SAMESITE:None}
     cookie-domain: ${REFRESH_COOKIE_DOMAIN:}
+    cookie-partitioned: ${REFRESH_COOKIE_PARTITIONED:true}
   scanner:
     provider: ${SCANNER_PROVIDER:huggingface}

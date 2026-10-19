@@ -89,40 +89,57 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   requiresCsrf?: boolean;
 }
 
-let refreshPromise: Promise<string | null> | null = null;
+let activeRefreshPromise: Promise<AuthResponse | null> | null = null;
+
+export async function performRefresh(): Promise<AuthResponse | null> {
+  if (activeRefreshPromise) {
+    return activeRefreshPromise;
+  }
+
+  activeRefreshPromise = (async () => {
+    try {
+      const url = `${BASE_URL}/api/v1/auth/refresh`;
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
+        },
+      });
+
+      if (!response.ok) {
+        setAccessToken(null);
+        return null;
+      }
+
+      const data = (await response.json()) as AuthResponse;
+      if (data?.accessToken) {
+        setAccessToken(data.accessToken);
+        return data;
+      }
+      setAccessToken(null);
+      return null;
+    } catch {
+      setAccessToken(null);
+      return null;
+    } finally {
+      activeRefreshPromise = null;
+    }
+  })();
+
+  return activeRefreshPromise;
+}
 
 async function executeRefresh(): Promise<string | null> {
-  try {
-    const url = `${BASE_URL}/api/v1/auth/refresh`;
-    const response = await fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
-        [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
-      },
-    });
-
-    if (!response.ok) {
-      setAccessToken(null);
-      if (onSessionExpiredCallback) {
-        onSessionExpiredCallback();
-      }
-      return null;
-    }
-
-    const data = (await response.json()) as AuthResponse;
-    setAccessToken(data.accessToken);
-    return data.accessToken;
-  } catch {
-    setAccessToken(null);
+  const auth = await performRefresh();
+  if (!auth) {
     if (onSessionExpiredCallback) {
       onSessionExpiredCallback();
     }
     return null;
-  } finally {
-    refreshPromise = null;
   }
+  return auth.accessToken;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -177,10 +194,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   // Handle 401 Unauthenticated for authenticated requests (with retry logic)
   const isAuthEndpoint = path.includes('/api/v1/auth/login') || path.includes('/api/v1/auth/register') || path.includes('/api/v1/auth/refresh');
   if (response.status === 401 && !options.skipAuth && !isAuthEndpoint) {
-    if (!refreshPromise) {
-      refreshPromise = executeRefresh();
-    }
-    const newToken = await refreshPromise;
+    const newToken = await executeRefresh();
 
     if (newToken) {
       // Retry original request with new token
@@ -254,21 +268,7 @@ export const authApi = {
   },
 
   async refresh(): Promise<AuthResponse | null> {
-    try {
-      const res = await request<AuthResponse>('/api/v1/auth/refresh', {
-        method: 'POST',
-        skipAuth: true,
-        requiresCsrf: true,
-      });
-      if (res?.accessToken) {
-        setAccessToken(res.accessToken);
-        return res;
-      }
-      return null;
-    } catch {
-      setAccessToken(null);
-      return null;
-    }
+    return performRefresh();
   },
 
   async logout(): Promise<void> {

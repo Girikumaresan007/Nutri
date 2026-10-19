@@ -61,9 +61,10 @@ nutritrack:
     ttl: ${REFRESH_TOKEN_TTL:14d}
     cookie-name: nt_refresh
     cookie-secure: ${REFRESH_COOKIE_SECURE:true}
-    cookie-same-site: ${REFRESH_COOKIE_SAMESITE:Strict}
+    cookie-same-site: ${REFRESH_COOKIE_SAMESITE:None}
     cookie-path: /api/v1/auth
     cookie-domain: ${REFRESH_COOKIE_DOMAIN:}
+    cookie-partitioned: ${REFRESH_COOKIE_PARTITIONED:true}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
   security:

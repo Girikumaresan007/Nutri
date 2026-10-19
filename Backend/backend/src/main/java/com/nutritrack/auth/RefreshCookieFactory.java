@@ -45,6 +45,9 @@ public class RefreshCookieFactory {
         if (props.cookieDomain() != null && !props.cookieDomain().isBlank()) {
             b.domain(props.cookieDomain());
         }
+        if (props.cookieSecure() && (props.cookiePartitioned() || "None".equalsIgnoreCase(props.cookieSameSite()))) {
+            b.partitioned(true);
+        }
         return b;
     }
 }
