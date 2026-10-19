@@ -1,0 +1,43 @@
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+!.env.*.example
+!*.env.example
+
+# Dependencies & Build outputs
+node_modules/
+dist/
+target/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Test data & Model cache
+Backend/inference/test_dataset/
+Backend/inference/model_cache/
+Backend/inference/experimental_model/
+pgdata/
+pgdata_prod/
+*.log
+
+# Generated test results and audit reports
+STAGE*_TEST_RESULTS.*
+STAGE*_REPORT.*
+STAGE*_AUDIT*.*
+STAGE*_BASELINE*.*
+STAGE*_MODEL_COMPARISON.*
+STAGE*_DATASET_REPORT.*
+STAGE*_TRAINING_REPORT.*
+stage*_results.json
+stage*_log.json
+

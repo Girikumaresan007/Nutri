@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#244C3A">
+  <title>NutriTrack AI — Offline</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8f6ef;
+      color: #1f2937;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 32px 24px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 4px 16px rgba(36, 76, 58, 0.08);
+    }
+    .logo-badge {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+      background: #244C3A;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logo-badge svg {
+      width: 38px;
+      height: 38px;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #244C3A;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+    p {
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: #4b5563;
+      margin-bottom: 24px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: #eef7ed;
+      color: #244C3A;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border-radius: 9999px;
+      margin-bottom: 16px;
+    }
+    .retry-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 24px;
+      background: #244C3A;
+      color: #ffffff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s ease;
+      text-decoration: none;
+    }
+    .retry-btn:hover {
+      background: #1c3c2e;
+    }
+    .note {
+      font-size: 0.75rem;
+      color: #9ca3af;
+      margin-top: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-badge" aria-hidden="true">
+      <svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M92 27C63 29 39 40 31 61c-7 18 3 37 21 39 27 4 46-23 40-73Z" fill="#A8C5A0"/>
+        <path d="M32 96c12-18 29-33 53-48" stroke="#FFFDF8" stroke-width="5" stroke-linecap="round"/>
+        <path d="M50 73c2 8 8 14 17 17M61 60c8 1 15 5 20 11" stroke="#FFFDF8" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="91" cy="28" r="5" fill="#F08A70"/>
+      </svg>
+    </div>
+    <span class="badge">Offline Mode</span>
+    <h1>You're currently offline</h1>
+    <p>NutriTrack AI is online-first to protect your health records and keep your nutrition data synchronized securely with your account.</p>
+    <button class="retry-btn" onclick="window.location.reload()">Retry Connection</button>
+    <p class="note">Private data and personal records are never saved in unencrypted offline caches.</p>
+  </div>
+</body>
+</html>

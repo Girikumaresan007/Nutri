@@ -1,0 +1,25 @@
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/unused   # replaced by Testcontainers via @DynamicPropertySource
+    username: unused
+    password: unused
+nutritrack:
+  jwt:
+    secret: test-secret-test-secret-test-secret-0123456789
+  refresh-token:
+    cookie-secure: false
+    cookie-same-site: Lax
+  cors:
+    allowed-origins: http://localhost:5173
+  security:
+    bcrypt-strength: 4
+  rate-limit:
+    auth-attempts: 10000
+    scanner-requests: 10000
+  scanner:
+    provider: none

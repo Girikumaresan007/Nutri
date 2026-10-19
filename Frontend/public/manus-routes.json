@@ -1,0 +1,1 @@
+{"routes":[{"path":"/","title":"Dashboard"},{"path":"/diary","title":"Food Diary"},{"path":"/scanner","title":"AI Food Scanner"},{"path":"/analytics","title":"Nutrition Analytics"},{"path":"/workouts","title":"Workouts"},{"path":"/goals","title":"Weight & Goals"},{"path":"/profile","title":"Profile & Settings"}]}

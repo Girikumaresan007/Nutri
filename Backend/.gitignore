@@ -1,0 +1,8 @@
+target/
+.env
+!.env.example
+!.env.*.example
+*.log
+node_modules/
+.idea/
+*.iml

@@ -1,0 +1,45 @@
+# PRODUCTION CONFIGURATION (application-prod.yml)
+# All secrets and environment-specific endpoints MUST be supplied via environment variables.
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: framework   # honour X-Forwarded-Proto, X-Forwarded-For from trusted reverse proxy / CDN
+
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      idle-timeout: 300000              # 5 minutes
+      max-lifetime: 1800000             # 30 minutes
+      connection-timeout: 20000         # 20 seconds
+      pool-name: NutriTrackHikariProdPool
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never               # Never disclose system internals or database IP in production health checks
+
+nutritrack:
+  refresh-token:
+    cookie-secure: true                 # Enforces Secure flag for HTTPS
+    cookie-same-site: ${REFRESH_COOKIE_SAMESITE:Strict}
+    cookie-domain: ${REFRESH_COOKIE_DOMAIN:}
+  scanner:
+    provider: ${SCANNER_PROVIDER:huggingface}

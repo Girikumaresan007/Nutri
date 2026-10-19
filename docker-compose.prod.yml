@@ -1,0 +1,97 @@
+# ==============================================================================
+# NutriTrack AI — Production Docker Compose (docker-compose.prod.yml)
+# Requires real environment secrets supplied via external environment or .env
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nutritrack-postgres-prod
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nutritrack}
+      POSTGRES_USER: ${POSTGRES_USER:-nutritrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env or production environment}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nutritrack} -d ${POSTGRES_DB:-nutritrack}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nutritrack-prod-network
+
+  python-inference:
+    build:
+      context: ./Backend/inference
+      dockerfile: Dockerfile
+    container_name: nutritrack-inference-prod
+    restart: always
+    environment:
+      - PORT=5001
+      - HF_INFERENCE_HOST=0.0.0.0
+      - DOCKER_CONTAINER=true
+      - HF_LOCAL_FILES_ONLY=false
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      - nutritrack-prod-network
+
+  backend:
+    build:
+      context: ./Backend/backend
+      dockerfile: Dockerfile
+    container_name: nutritrack-backend-prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      python-inference:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - PORT=8080
+      - DB_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-nutritrack}
+      - DB_USERNAME=${POSTGRES_USER:-nutritrack}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env or production environment}
+      - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-10}
+      - DB_POOL_MIN_IDLE=${DB_POOL_MIN_IDLE:-2}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env or production environment}
+      - SCANNER_PROVIDER=huggingface
+      - HF_INFERENCE_ENDPOINT=http://python-inference:5001/classify
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS in the root .env or production environment}
+      - REFRESH_COOKIE_SECURE=true
+      - REFRESH_COOKIE_SAMESITE=${REFRESH_COOKIE_SAMESITE:-Strict}
+      - REFRESH_COOKIE_DOMAIN=${REFRESH_COOKIE_DOMAIN:-}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    networks:
+      - nutritrack-prod-network
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL:?Set VITE_API_BASE_URL in the root .env or production environment}
+    container_name: nutritrack-frontend-prod
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    networks:
+      - nutritrack-prod-network
+
+volumes:
+  pgdata_prod:
+    driver: local
+
+networks:
+  nutritrack-prod-network:
+    driver: bridge

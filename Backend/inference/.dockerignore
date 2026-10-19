@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+test_dataset/
+stage15_dataset/
+experimental_model/
+*.json
+*.cjs
+*.log
+.git/
+.gitignore
