@@ -1,6 +1,9 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { AppShell } from '@/app/AppShell';
+import { useApp } from '@/app/AppContext';
+import { SplashScreen } from '@/components/SplashScreen';
 
 const DashboardPage = lazy(() => import('@/features/dashboard/DashboardPage').then((module) => ({ default: module.DashboardPage })));
 const DiaryPage = lazy(() => import('@/features/diary/DiaryPage').then((module) => ({ default: module.DiaryPage })));
@@ -17,16 +20,32 @@ function RouteLoading() {
 const page = (content: ReactNode) => <Suspense fallback={<RouteLoading />}>{content}</Suspense>;
 
 export function App() {
-  return <Routes>
-    <Route element={<AppShell />}>
-      <Route path="/" element={page(<DashboardPage />)} />
-      <Route path="/diary" element={page(<DiaryPage />)} />
-      <Route path="/scanner" element={page(<ScannerPage />)} />
-      <Route path="/analytics" element={page(<AnalyticsPage />)} />
-      <Route path="/workouts" element={page(<WorkoutsPage />)} />
-      <Route path="/goals" element={page(<GoalsPage />)} />
-      <Route path="/profile" element={page(<ProfilePage />)} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Route>
-  </Routes>;
+  const { isAuthLoading } = useApp();
+  const [showSplash, setShowSplash] = useState(true);
+
+  return (
+    <>
+      <AnimatePresence mode="wait">
+        {showSplash && (
+          <SplashScreen
+            isLoading={isAuthLoading}
+            onFinish={() => setShowSplash(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/" element={page(<DashboardPage />)} />
+          <Route path="/diary" element={page(<DiaryPage />)} />
+          <Route path="/scanner" element={page(<ScannerPage />)} />
+          <Route path="/analytics" element={page(<AnalyticsPage />)} />
+          <Route path="/workouts" element={page(<WorkoutsPage />)} />
+          <Route path="/goals" element={page(<GoalsPage />)} />
+          <Route path="/profile" element={page(<ProfilePage />)} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </>
+  );
 }

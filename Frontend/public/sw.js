@@ -1,7 +1,7 @@
 // NutriTrack AI — Progressive Web App Service Worker
-// Version: 1.0.0
-const CACHE_NAME = 'nutritrack-shell-v1';
-const STATIC_CACHE = 'nutritrack-static-v1';
+// Version: 1.1.0
+const CACHE_NAME = 'nutritrack-shell-v2';
+const STATIC_CACHE = 'nutritrack-static-v2';
 
 // Safe, static public shell assets to precache on install
 const PRECACHE_URLS = [
