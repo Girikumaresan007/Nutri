@@ -10,15 +10,15 @@ export function SplashScreen({ isLoading = true, onFinish }: SplashScreenProps) 
   const shouldReduceMotion = useReducedMotion();
   const [minTimerDone, setMinTimerDone] = useState(false);
 
-  // Guarantee minimum display time (700ms) for polished entrance and safety timeout (3500ms)
+  // Smooth entrance threshold (200ms) and safety timeout (2500ms)
   useEffect(() => {
     const minTimer = window.setTimeout(() => {
       setMinTimerDone(true);
-    }, 700);
+    }, 200);
 
     const safetyTimer = window.setTimeout(() => {
       if (onFinish) onFinish();
-    }, 3500);
+    }, 2500);
 
     return () => {
       window.clearTimeout(minTimer);
