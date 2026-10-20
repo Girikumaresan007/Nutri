@@ -22,6 +22,26 @@ export function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow?: str
   </div>;
 }
 
+let activeModalCount = 0;
+let originalBodyOverflow = '';
+
+function acquireScrollLock() {
+  if (typeof document === 'undefined') return;
+  if (activeModalCount === 0) {
+    originalBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+  }
+  activeModalCount++;
+}
+
+function releaseScrollLock() {
+  if (typeof document === 'undefined') return;
+  activeModalCount = Math.max(0, activeModalCount - 1);
+  if (activeModalCount === 0) {
+    document.body.style.overflow = originalBodyOverflow;
+  }
+}
+
 export function Modal({ open, onClose, title, subtitle, children, wide = false, panelClassName = '', backdropClassName = '', footer }: { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; wide?: boolean; panelClassName?: string; backdropClassName?: string; footer?: ReactNode }) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -32,8 +52,7 @@ export function Modal({ open, onClose, title, subtitle, children, wide = false, 
     if (!open) return;
     const dialog = dialogRef.current;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    acquireScrollLock();
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true');
     const frame = window.requestAnimationFrame(() => (focusable()[0] ?? dialog)?.focus());
     const onKey = (event: KeyboardEvent) => {
@@ -51,7 +70,7 @@ export function Modal({ open, onClose, title, subtitle, children, wide = false, 
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener('keydown', onKey, true);
-      document.body.style.overflow = previous;
+      releaseScrollLock();
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [open]);

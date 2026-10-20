@@ -1,5 +1,5 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { AppShell } from '@/app/AppShell';
 import { useApp } from '@/app/AppContext';
@@ -17,6 +17,14 @@ function RouteLoading() {
   return <div className="route-loading" role="status"><span /><p>Loading your space…</p></div>;
 }
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [pathname]);
+  return null;
+}
+
 const page = (content: ReactNode) => <Suspense fallback={<RouteLoading />}>{content}</Suspense>;
 
 export function App() {
@@ -25,6 +33,7 @@ export function App() {
 
   return (
     <>
+      <ScrollToTop />
       <AnimatePresence mode="wait">
         {showSplash && (
           <SplashScreen

@@ -30,7 +30,26 @@
 
 html {
   min-width: 320px;
-  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.skeleton-pulse {
+  background: linear-gradient(90deg, #edf0e9 0%, #f5f7f3 50%, #edf0e9 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-pulse {
+    animation: none;
+    background: #edf0e9;
+  }
 }
 
 body {

@@ -22,7 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class RefreshTokenService {
-    private static final Duration REUSE_GRACE = Duration.ofSeconds(10);
+    /** 90-second reuse grace window accommodates mobile reconnections, backgrounding, and Render cold-start latency. */
+    private static final Duration REUSE_GRACE = Duration.ofSeconds(90);
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final RefreshTokenRepository repo;

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { addDays, format, parseISO, subDays } from 'date-fns';
 import type { AppData, FoodEntry, MealCategory, WorkoutSession, WeightLog, UserProfile, NutritionGoal } from '@/types';
 import { emptyAppData, repository } from '@/services/repository';
@@ -81,7 +81,8 @@ interface AppContextValue {
 const Context = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<AppData>(() => repository.load() ?? emptyAppData);
+  // Data starts clean and empty during authentication check; guest localStorage is only loaded if unauthenticated
+  const [data, setData] = useState<AppData>(emptyAppData);
   const [currentUser, setCurrentUser] = useState<UserSummary | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(todayISO());
@@ -93,6 +94,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [authModal, setAuthModal] = useState<AuthModalState>({ open: false, mode: 'login' });
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Sequence ref to prevent out-of-order responses from overwriting newer dates
+  const foodRequestSeq = useRef(0);
 
   // Preserve guest data in local storage only when unauthenticated and initial auth restoration has completed
   useEffect(() => {
@@ -135,39 +139,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Attempt session restoration on initial mount using silent refresh
-  useEffect(() => {
-    let active = true;
-    authApi.refresh()
-      .then(async (res) => {
-        if (active && res?.user) {
-          setCurrentUser(res.user);
-          // Eagerly prefetch profile and goals so user sees them immediately upon session restoration
-          await refreshProfileAndGoals();
-        }
-      })
-      .catch(() => {
-        // Guest mode continues
-      })
-      .finally(() => {
-        if (active) setIsAuthLoading(false);
-      });
-
-    setOnSessionExpired(() => {
-      if (active) {
-        setCurrentUser(null);
-        setDailySummary(null);
-        pushToast({ tone: 'info', title: 'Session expired', detail: 'Please sign in again to sync with your account.' });
-      }
-    });
-
-    return () => {
-      active = false;
-      setOnSessionExpired(null);
-    };
-  }, [pushToast, refreshProfileAndGoals]);
-
-  // Synchronize Food Entries and Daily Nutrition Summary
+  // Synchronize Food Entries and Daily Nutrition Summary with out-of-order race protection
   const refreshFoodAndSummary = useCallback(async (targetDate?: string) => {
     if (!currentUser) {
       setDailySummary(null);
@@ -175,6 +147,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     const date = targetDate ?? selectedDate;
+    const currentSeq = ++foodRequestSeq.current;
     setIsFoodLoading(true);
 
     try {
@@ -185,6 +158,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         foodApi.list({ from: weekStart, to: weekEnd, size: 100 }),
         nutritionApi.getDailySummary(date),
       ]);
+
+      // If another request started while this was in flight, discard stale response
+      if (currentSeq !== foodRequestSeq.current) {
+        return;
+      }
 
       if (listRes.status === 'fulfilled' && listRes.value?.items) {
         const serverEntries = listRes.value.items.map(toFrontendFoodEntry);
@@ -197,13 +175,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      if (sumRes.status === 'fulfilled' && sumRes.value) {
+      if (sumRes.status === 'fulfilled' && sumRes.value && sumRes.value.date === date) {
         setDailySummary(sumRes.value);
       }
     } catch {
       // Keep existing state on error
     } finally {
-      setIsFoodLoading(false);
+      if (currentSeq === foodRequestSeq.current) {
+        setIsFoodLoading(false);
+      }
     }
   }, [currentUser, selectedDate]);
 
@@ -253,16 +233,66 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [currentUser]);
 
+  // Attempt session restoration on initial mount using silent refresh
+  useEffect(() => {
+    let active = true;
+    authApi.refresh()
+      .then(async (res) => {
+        if (!active) return;
+        if (res?.user) {
+          setCurrentUser(res.user);
+          // Eagerly prefetch profile, goals, food entries & daily summary in parallel
+          // so dashboard data is 100% verified and loaded BEFORE isAuthLoading becomes false!
+          try {
+            await Promise.allSettled([
+              refreshProfileAndGoals(),
+              refreshFoodAndSummary(selectedDate),
+              refreshWorkouts(),
+              refreshWeights(),
+            ]);
+          } catch {
+            // Non-fatal sync error
+          }
+        } else {
+          // Unauthenticated guest mode: load local guest state
+          setData(repository.load() ?? emptyAppData);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        // Network failure / guest mode: load local guest state
+        setData(repository.load() ?? emptyAppData);
+      })
+      .finally(() => {
+        if (active) setIsAuthLoading(false);
+      });
+
+    setOnSessionExpired(() => {
+      if (active) {
+        setCurrentUser(null);
+        setDailySummary(null);
+        repository.clear();
+        setData(emptyAppData);
+        pushToast({ tone: 'info', title: 'Session expired', detail: 'Please sign in again to sync with your account.' });
+      }
+    });
+
+    return () => {
+      active = false;
+      setOnSessionExpired(null);
+    };
+  }, [pushToast, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate]);
+
   useEffect(() => {
     if (currentUser) {
       void refreshProfileAndGoals();
       void refreshFoodAndSummary(selectedDate);
       void refreshWorkouts();
       void refreshWeights();
-    } else {
+    } else if (!isAuthLoading) {
       setDailySummary(null);
     }
-  }, [currentUser, selectedDate, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights]);
+  }, [currentUser, selectedDate, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, isAuthLoading]);
 
   const saveProfile = useCallback(async (profile: UserProfile): Promise<UserProfile> => {
     if (currentUser) {
@@ -321,6 +351,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const saveFoodEntry = useCallback(async (entry: Omit<FoodEntry, 'id'>, existingId?: string): Promise<FoodEntry> => {
     if (currentUser) {
+      const existingEntry = existingId ? data.entries.find((e) => e.id === existingId) : null;
+      const oldDate = existingEntry?.date;
+
       const req = toBackendFoodEntryRequest(entry);
       const res = existingId
         ? await foodApi.update(existingId, req)
@@ -333,9 +366,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }));
 
       try {
-        const summaryRes = await nutritionApi.getDailySummary(saved.date);
         if (saved.date === selectedDate) {
+          const summaryRes = await nutritionApi.getDailySummary(saved.date);
           setDailySummary(summaryRes);
+        } else if (oldDate === selectedDate) {
+          const oldSummaryRes = await nutritionApi.getDailySummary(oldDate);
+          setDailySummary(oldSummaryRes);
         }
       } catch {
         // Silently preserve local state
@@ -426,17 +462,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (credentials: LoginRequest) => {
     const res = await authApi.login(credentials);
+    repository.clear();
     setData(emptyAppData);
     setCurrentUser(res.user);
+    try {
+      await Promise.allSettled([
+        refreshProfileAndGoals(),
+        refreshFoodAndSummary(selectedDate),
+        refreshWorkouts(),
+        refreshWeights(),
+      ]);
+    } catch {
+      // Non-fatal sync
+    }
     pushToast({ tone: 'success', title: `Welcome back, ${res.user.name.split(' ')[0]}` });
-  }, [pushToast]);
+  }, [pushToast, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate]);
 
   const registerUser = useCallback(async (req: RegisterRequest) => {
     const res = await authApi.register(req);
+    repository.clear();
     setData(emptyAppData);
     setCurrentUser(res.user);
+    try {
+      await Promise.allSettled([
+        refreshProfileAndGoals(),
+        refreshFoodAndSummary(selectedDate),
+        refreshWorkouts(),
+        refreshWeights(),
+      ]);
+    } catch {
+      // Non-fatal sync
+    }
     pushToast({ tone: 'success', title: `Welcome to NutriTrack, ${res.user.name.split(' ')[0]}` });
-  }, [pushToast]);
+  }, [pushToast, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate]);
 
   const logout = useCallback(async () => {
     try {

@@ -9,19 +9,26 @@ interface SplashScreenProps {
 export function SplashScreen({ isLoading = true, onFinish }: SplashScreenProps) {
   const shouldReduceMotion = useReducedMotion();
   const [minTimerDone, setMinTimerDone] = useState(false);
+  const [isSlowWakeup, setIsSlowWakeup] = useState(false);
 
-  // Smooth entrance threshold (200ms) and safety timeout (2500ms)
+  // Smooth entrance threshold (200ms) and safety timeout (18s for Render cold starts)
   useEffect(() => {
     const minTimer = window.setTimeout(() => {
       setMinTimerDone(true);
     }, 200);
 
+    // If initial loading takes longer than 2.8s (e.g. cold start), show reassuring status
+    const slowTimer = window.setTimeout(() => {
+      setIsSlowWakeup(true);
+    }, 2800);
+
     const safetyTimer = window.setTimeout(() => {
       if (onFinish) onFinish();
-    }, 2500);
+    }, 18000);
 
     return () => {
       window.clearTimeout(minTimer);
+      window.clearTimeout(slowTimer);
       window.clearTimeout(safetyTimer);
     };
   }, [onFinish]);
@@ -399,7 +406,11 @@ export function SplashScreen({ isLoading = true, onFinish }: SplashScreenProps) 
                 gap: '6px',
               }}
             >
-              <span>Preparing your nutrition dashboard…</span>
+              <span>
+                {isSlowWakeup
+                  ? 'Connecting to secure health cloud…'
+                  : 'Preparing your nutrition dashboard…'}
+              </span>
             </motion.p>
           </motion.div>
         ) : (

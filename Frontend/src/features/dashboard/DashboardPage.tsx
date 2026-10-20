@@ -21,12 +21,33 @@ const greeting = () => {
 };
 
 export function DashboardPage() {
-  const { data, selectedDate, setSelectedDate, openFoodModal, pushToast, isAuthenticated, dailySummary, openAuthModal, currentUser } = useApp();
+  const {
+    data,
+    selectedDate,
+    setSelectedDate,
+    openFoodModal,
+    pushToast,
+    isAuthenticated,
+    dailySummary,
+    openAuthModal,
+    currentUser,
+    isAuthLoading,
+    isFoodLoading,
+  } = useApp();
   const navigate = useNavigate();
   const entries = data.entries.filter((entry) => entry.date === selectedDate);
-  const summary = (isAuthenticated && dailySummary?.consumed) ? dailySummary.consumed : sumNutrition(entries);
-  const goal = (isAuthenticated && dailySummary?.target) ? toFrontendGoal(dailySummary.target) : (getGoalForDate(data.goals, selectedDate) ?? fallbackGoal);
-  const remaining = (isAuthenticated && dailySummary?.remaining?.calories != null) ? dailySummary.remaining.calories : (goal.dailyCalories - summary.calories);
+  const isSummaryForSelectedDate = Boolean(dailySummary && dailySummary.date === selectedDate);
+  const isSummaryLoading = isAuthLoading || (isAuthenticated && isFoodLoading && !isSummaryForSelectedDate);
+
+  const summary = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.consumed)
+    ? dailySummary.consumed
+    : sumNutrition(entries);
+  const goal = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.target)
+    ? toFrontendGoal(dailySummary.target)
+    : (getGoalForDate(data.goals, selectedDate) ?? fallbackGoal);
+  const remaining = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.remaining?.calories != null)
+    ? dailySummary.remaining.calories
+    : (goal.dailyCalories - summary.calories);
   const startOfDay = parseISO(`${selectedDate}T12:00:00`);
   const meals = MEAL_CATEGORIES.map((meal) => ({ meal, items: entries.filter((entry) => entry.meal === meal) }));
   const dayWorkouts = data.workouts.filter((workout) => workout.date === selectedDate);
@@ -143,7 +164,7 @@ export function DashboardPage() {
         </div>
       )}
 
-      {!isAuthenticated && (
+      {!isAuthenticated && !isAuthLoading && (
         <div
           className="demo-banner"
           style={{
@@ -171,18 +192,38 @@ export function DashboardPage() {
             </div>
             <span className="soft-icon green-soft"><Flame size={18} /></span>
           </div>
-          <div className="calorie-main">
-            <RingProgress value={summary.calories} target={goal.dailyCalories} label={formatNumber(summary.calories)} sublabel="consumed" />
-            <div className="calorie-summary">
-              <span className="summary-label">DAILY TARGET</span>
-              <strong>{formatNumber(goal.dailyCalories)} <small>kcal</small></strong>
-              <div className={`remaining-badge ${remaining < 0 ? 'over' : ''}`}>
-                {remaining >= 0 ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}
-                <span>{formatNumber(Math.abs(remaining))} kcal {remaining >= 0 ? 'remaining' : 'over target'}</span>
+          {isSummaryLoading ? (
+            <div className="calorie-main" style={{ opacity: 0.85 }}>
+              <div
+                className="skeleton-pulse"
+                style={{
+                  width: '120px',
+                  height: '120px',
+                  borderRadius: '50%',
+                  margin: '8px auto',
+                }}
+              />
+              <div className="calorie-summary">
+                <span className="summary-label">DAILY TARGET</span>
+                <div className="skeleton-pulse" style={{ width: '90px', height: '24px', margin: '4px 0 8px' }} />
+                <div className="skeleton-pulse" style={{ width: '130px', height: '20px', borderRadius: '12px' }} />
+                <p className="muted-copy">Synchronizing verified nutrition…</p>
               </div>
-              <p className="muted-copy">A helpful estimate, not a score.</p>
             </div>
-          </div>
+          ) : (
+            <div className="calorie-main">
+              <RingProgress value={summary.calories} target={goal.dailyCalories} label={formatNumber(summary.calories)} sublabel="consumed" />
+              <div className="calorie-summary">
+                <span className="summary-label">DAILY TARGET</span>
+                <strong>{formatNumber(goal.dailyCalories)} <small>kcal</small></strong>
+                <div className={`remaining-badge ${remaining < 0 ? 'over' : ''}`}>
+                  {remaining >= 0 ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}
+                  <span>{formatNumber(Math.abs(remaining))} kcal {remaining >= 0 ? 'remaining' : 'over target'}</span>
+                </div>
+                <p className="muted-copy">A helpful estimate, not a score.</p>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card className="macro-panel">
@@ -193,20 +234,37 @@ export function DashboardPage() {
             </div>
             <span className="quiet-note">{selectedDate === today ? 'Today' : format(startOfDay, 'MMM d')}</span>
           </div>
-          <div className="macro-list">
-            {macroCards.map(({ key, label, tone, mark }) => (
-              <div className="macro-row" key={key}>
-                <span className={`macro-mark macro-${tone}`}>{mark}</span>
-                <div className="macro-content">
-                  <div className="macro-label-line">
-                    <strong>{label}</strong>
-                    <span>{formatNumber(summary[key])}<small> / {formatNumber(macros[key])} g</small></span>
+          {isSummaryLoading ? (
+            <div className="macro-list">
+              {macroCards.map(({ key, label, tone, mark }) => (
+                <div className="macro-row" key={key}>
+                  <span className={`macro-mark macro-${tone}`}>{mark}</span>
+                  <div className="macro-content">
+                    <div className="macro-label-line">
+                      <strong>{label}</strong>
+                      <span className="skeleton-pulse" style={{ width: '55px', height: '14px', display: 'inline-block' }} />
+                    </div>
+                    <div className="skeleton-pulse" style={{ width: '100%', height: '8px', borderRadius: '4px', marginTop: '6px' }} />
                   </div>
-                  <ProgressBar value={summary[key]} target={macros[key]} tone={tone} />
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="macro-list">
+              {macroCards.map(({ key, label, tone, mark }) => (
+                <div className="macro-row" key={key}>
+                  <span className={`macro-mark macro-${tone}`}>{mark}</span>
+                  <div className="macro-content">
+                    <div className="macro-label-line">
+                      <strong>{label}</strong>
+                      <span>{formatNumber(summary[key])}<small> / {formatNumber(macros[key])} g</small></span>
+                    </div>
+                    <ProgressBar value={summary[key]} target={macros[key]} tone={tone} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <p className="subtle-note">Targets are personal estimates that can be adjusted in Goals.</p>
         </Card>
       </div>

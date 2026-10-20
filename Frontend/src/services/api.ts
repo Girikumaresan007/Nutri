@@ -90,43 +90,98 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 }
 
 let activeRefreshPromise: Promise<AuthResponse | null> | null = null;
+let lastRefreshWasAuthError = false;
 
-export async function performRefresh(): Promise<AuthResponse | null> {
+function createTimeoutSignal(timeoutMs: number, externalSignal?: AbortSignal | null): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`Request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+
+  let onExternalAbort: (() => void) | null = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort(externalSignal.reason);
+    } else {
+      onExternalAbort = () => controller.abort(externalSignal.reason);
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    if (externalSignal && onExternalAbort) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
+  };
+
+  return { signal: controller.signal, cleanup };
+}
+
+export async function performRefresh(attempt = 1): Promise<AuthResponse | null> {
   if (activeRefreshPromise) {
     return activeRefreshPromise;
   }
 
   activeRefreshPromise = (async () => {
-    try {
-      const url = `${BASE_URL}/api/v1/auth/refresh`;
-      const response = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-          [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
-        },
-      });
+    lastRefreshWasAuthError = false;
+    const url = `${BASE_URL}/api/v1/auth/refresh`;
+    const maxAttempts = 2;
 
-      if (!response.ok) {
+    for (let currentAttempt = attempt; currentAttempt <= maxAttempts; currentAttempt++) {
+      const { signal, cleanup } = createTimeoutSignal(35000);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          credentials: 'include',
+          signal,
+          headers: {
+            Accept: 'application/json',
+            [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
+          },
+        });
+        cleanup();
+
+        // 401 or 403 means the refresh token is genuinely invalid, expired, or missing
+        if (response.status === 401 || response.status === 403) {
+          lastRefreshWasAuthError = true;
+          setAccessToken(null);
+          return null;
+        }
+
+        // 502/503/504 can happen during Render container cold starts: retry once
+        if ((response.status === 502 || response.status === 503 || response.status === 504) && currentAttempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 1800));
+          continue;
+        }
+
+        if (!response.ok) {
+          setAccessToken(null);
+          return null;
+        }
+
+        const data = (await response.json()) as AuthResponse;
+        if (data?.accessToken) {
+          setAccessToken(data.accessToken);
+          return data;
+        }
         setAccessToken(null);
         return null;
+      } catch (err: unknown) {
+        cleanup();
+        // If it was a network error or timeout during a Render cold start, retry once
+        if (currentAttempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+        // Network failure (offline / timeout) — preserve session state, do not treat as auth revocation
+        return null;
       }
-
-      const data = (await response.json()) as AuthResponse;
-      if (data?.accessToken) {
-        setAccessToken(data.accessToken);
-        return data;
-      }
-      setAccessToken(null);
-      return null;
-    } catch {
-      setAccessToken(null);
-      return null;
-    } finally {
-      activeRefreshPromise = null;
     }
-  })();
+    return null;
+  })().finally(() => {
+    activeRefreshPromise = null;
+  });
 
   return activeRefreshPromise;
 }
@@ -134,7 +189,8 @@ export async function performRefresh(): Promise<AuthResponse | null> {
 async function executeRefresh(): Promise<string | null> {
   const auth = await performRefresh();
   if (!auth) {
-    if (onSessionExpiredCallback) {
+    // Only fire session expired callback if the backend definitively rejected authentication (401/403)
+    if (lastRefreshWasAuthError && onSessionExpiredCallback) {
       onSessionExpiredCallback();
     }
     return null;
@@ -172,15 +228,22 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     }
   }
 
+  // Track the exact token this request was initiated with
+  const tokenUsed = inMemoryAccessToken;
+
   // Attach in-memory access token unless explicitly skipped
-  if (!options.skipAuth && inMemoryAccessToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${inMemoryAccessToken}`);
+  if (!options.skipAuth && tokenUsed && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${tokenUsed}`);
   }
+
+  // Set a 30s timeout on standard application requests
+  const { signal: timeoutSignal, cleanup: cleanupTimeout } = createTimeoutSignal(30000, options.signal);
 
   const fetchInit: RequestInit = {
     ...options,
     headers,
     body,
+    signal: timeoutSignal,
     credentials: 'include', // Always include credentials so cookies flow correctly
   };
 
@@ -188,22 +251,35 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   try {
     response = await fetch(url, fetchInit);
   } catch (error) {
+    cleanupTimeout();
     throw new ApiError(0, 'NETWORK_ERROR', error instanceof Error ? error.message : 'Network request failed', path);
   }
+  cleanupTimeout();
 
-  // Handle 401 Unauthenticated for authenticated requests (with retry logic)
+  // Handle 401 Unauthenticated for authenticated requests (with concurrency-safe refresh)
   const isAuthEndpoint = path.includes('/api/v1/auth/login') || path.includes('/api/v1/auth/register') || path.includes('/api/v1/auth/refresh');
   if (response.status === 401 && !options.skipAuth && !isAuthEndpoint) {
-    const newToken = await executeRefresh();
+    let newToken: string | null = null;
+
+    // Concurrency check: If another concurrent request already refreshed the access token while this request
+    // was in flight, reuse the already-refreshed token without sending a duplicate refresh request to the backend.
+    if (inMemoryAccessToken && inMemoryAccessToken !== tokenUsed) {
+      newToken = inMemoryAccessToken;
+    } else {
+      newToken = await executeRefresh();
+    }
 
     if (newToken) {
-      // Retry original request with new token
+      // Retry original request with verified new token
       headers.set('Authorization', `Bearer ${newToken}`);
+      const { signal: retrySignal, cleanup: cleanupRetry } = createTimeoutSignal(30000, options.signal);
       try {
-        response = await fetch(url, { ...fetchInit, headers });
+        response = await fetch(url, { ...fetchInit, headers, signal: retrySignal });
       } catch (error) {
+        cleanupRetry();
         throw new ApiError(0, 'NETWORK_ERROR', error instanceof Error ? error.message : 'Network request failed on retry', path);
       }
+      cleanupRetry();
     } else {
       // Refresh failed — parse 401 error
       const errPayload = await safeParseJson<ApiErrorPayload>(response);
