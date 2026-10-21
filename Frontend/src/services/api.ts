@@ -81,7 +81,12 @@ export function setOnSessionExpired(cb: (() => void) | null): void {
 const CSRF_HEADER_NAME = 'X-Requested-With';
 const CSRF_HEADER_VALUE = 'NutriTrack';
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081').replace(/\/+$/, '');
+const configuredBase = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+// On Vercel deployments (or when configured base is empty), use same-origin relative paths to route through Vercel's reverse proxy rewrite.
+// This guarantees first-party cookie persistence and avoids all 3rd-party cookie blocking in Chrome, Safari, and Android PWAs.
+const BASE_URL = typeof window !== 'undefined' && (window.location.hostname.endsWith('vercel.app') || !configuredBase)
+  ? ''
+  : configuredBase.replace(/\/+$/, '');
 
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
@@ -89,8 +94,12 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   requiresCsrf?: boolean;
 }
 
-let activeRefreshPromise: Promise<AuthResponse | null> | null = null;
-let lastRefreshWasAuthError = false;
+export type RefreshResult =
+  | { status: 'SUCCESS'; data: AuthResponse }
+  | { status: 'UNAUTHENTICATED'; error: string }
+  | { status: 'CONNECTION_ERROR'; error: string };
+
+let activeRefreshPromise: Promise<RefreshResult> | null = null;
 
 function createTimeoutSignal(timeoutMs: number, externalSignal?: AbortSignal | null): { signal: AbortSignal; cleanup: () => void } {
   const controller = new AbortController();
@@ -118,13 +127,12 @@ function createTimeoutSignal(timeoutMs: number, externalSignal?: AbortSignal | n
   return { signal: controller.signal, cleanup };
 }
 
-export async function performRefresh(attempt = 1): Promise<AuthResponse | null> {
+export async function performRefresh(attempt = 1): Promise<RefreshResult> {
   if (activeRefreshPromise) {
     return activeRefreshPromise;
   }
 
-  activeRefreshPromise = (async () => {
-    lastRefreshWasAuthError = false;
+  activeRefreshPromise = (async (): Promise<RefreshResult> => {
     const url = `${BASE_URL}/api/v1/auth/refresh`;
     const maxAttempts = 2;
 
@@ -142,43 +150,45 @@ export async function performRefresh(attempt = 1): Promise<AuthResponse | null> 
         });
         cleanup();
 
-        // 401 or 403 means the refresh token is genuinely invalid, expired, or missing
+        // 401 or 403 means the refresh token is definitively invalid, expired, revoked, or missing
         if (response.status === 401 || response.status === 403) {
-          lastRefreshWasAuthError = true;
           setAccessToken(null);
-          return null;
+          return { status: 'UNAUTHENTICATED', error: 'Session expired or unauthenticated.' };
         }
 
         // 502/503/504 can happen during Render container cold starts: retry once
         if ((response.status === 502 || response.status === 503 || response.status === 504) && currentAttempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 1800));
+          await new Promise((r) => setTimeout(r, 2000));
           continue;
         }
 
         if (!response.ok) {
-          setAccessToken(null);
-          return null;
+          return { status: 'CONNECTION_ERROR', error: `Server returned status ${response.status}` };
         }
 
         const data = (await response.json()) as AuthResponse;
         if (data?.accessToken) {
           setAccessToken(data.accessToken);
-          return data;
+          return { status: 'SUCCESS', data };
         }
+
         setAccessToken(null);
-        return null;
+        return { status: 'UNAUTHENTICATED', error: 'Missing access token in response.' };
       } catch (err: unknown) {
         cleanup();
         // If it was a network error or timeout during a Render cold start, retry once
         if (currentAttempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 2500));
           continue;
         }
-        // Network failure (offline / timeout) — preserve session state, do not treat as auth revocation
-        return null;
+        // Network failure (offline / timeout) — PRESERVE SESSION STATE, do not treat as auth revocation
+        return {
+          status: 'CONNECTION_ERROR',
+          error: err instanceof Error ? err.message : 'Network request failed',
+        };
       }
     }
-    return null;
+    return { status: 'CONNECTION_ERROR', error: 'Exceeded maximum connection attempts.' };
   })().finally(() => {
     activeRefreshPromise = null;
   });
@@ -187,15 +197,15 @@ export async function performRefresh(attempt = 1): Promise<AuthResponse | null> 
 }
 
 async function executeRefresh(): Promise<string | null> {
-  const auth = await performRefresh();
-  if (!auth) {
-    // Only fire session expired callback if the backend definitively rejected authentication (401/403)
-    if (lastRefreshWasAuthError && onSessionExpiredCallback) {
-      onSessionExpiredCallback();
-    }
-    return null;
+  const result = await performRefresh();
+  if (result.status === 'SUCCESS') {
+    return result.data.accessToken;
   }
-  return auth.accessToken;
+  // Only trigger session expired hook if the backend definitively rejected credentials (401/403)
+  if (result.status === 'UNAUTHENTICATED' && onSessionExpiredCallback) {
+    onSessionExpiredCallback();
+  }
+  return null;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -343,8 +353,13 @@ export const authApi = {
     return res;
   },
 
-  async refresh(): Promise<AuthResponse | null> {
+  async restoreSession(): Promise<RefreshResult> {
     return performRefresh();
+  },
+
+  async refresh(): Promise<AuthResponse | null> {
+    const res = await performRefresh();
+    return res.status === 'SUCCESS' ? res.data : null;
   },
 
   async logout(): Promise<void> {

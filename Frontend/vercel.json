@@ -2,6 +2,14 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/api/:path*",
+      "destination": "https://nutritrack-backend-5rti.onrender.com/api/:path*"
+    },
+    {
+      "source": "/actuator/:path*",
+      "destination": "https://nutritrack-backend-5rti.onrender.com/actuator/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

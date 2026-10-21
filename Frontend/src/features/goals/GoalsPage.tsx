@@ -26,8 +26,8 @@ export function GoalsPage() {
   const { data, saveWeight, removeWeight, isWeightsLoading, pushToast, askConfirm, saveGoal, deleteGoal, isAuthenticated, currentUser } = useApp();
   const hasSavedProfile = Boolean(data.profile);
   const defaultProfile: UserProfile = {
-    name: currentUser?.name || 'User',
-    email: currentUser?.email || '',
+    name: data.profile?.name || currentUser?.name || 'User',
+    email: currentUser?.email || data.profile?.email || '',
     dateOfBirth: '',
     heightCm: 170,
     currentWeightKg: 70,

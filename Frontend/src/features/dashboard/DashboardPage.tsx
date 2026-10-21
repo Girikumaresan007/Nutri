@@ -27,21 +27,23 @@ export function DashboardPage() {
     setSelectedDate,
     openFoodModal,
     pushToast,
+    authStatus,
     isAuthenticated,
     dailySummary,
     openAuthModal,
     currentUser,
-    isAuthLoading,
     isFoodLoading,
+    retryConnection,
   } = useApp();
   const navigate = useNavigate();
   const entries = data.entries.filter((entry) => entry.date === selectedDate);
   const isSummaryForSelectedDate = Boolean(dailySummary && dailySummary.date === selectedDate);
-  const isSummaryLoading = isAuthLoading || (isAuthenticated && isFoodLoading && !isSummaryForSelectedDate);
+  // In authenticated mode, summary is strictly considered loading until verified cloud dailySummary for selectedDate is received
+  const isSummaryLoading = authStatus === 'INITIALIZING' || (isAuthenticated && (!isSummaryForSelectedDate || isFoodLoading));
 
   const summary = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.consumed)
     ? dailySummary.consumed
-    : sumNutrition(entries);
+    : (isAuthenticated ? { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 } : sumNutrition(entries));
   const goal = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.target)
     ? toFrontendGoal(dailySummary.target)
     : (getGoalForDate(data.goals, selectedDate) ?? fallbackGoal);
@@ -82,7 +84,7 @@ export function DashboardPage() {
 
   const trendDescription = `Seven-day calorie intake and target trend. ${thisWeek.map((row) => `${format(parseISO(`${row.date}T12:00:00`), 'EEE, MMM d')}: ${formatNumber(row.calories)} kcal intake, ${formatNumber(row.target)} kcal target`).join('; ')}.`;
   const macros = goal;
-  const userName = currentUser?.name?.split(' ')[0] || data.profile?.name?.split(' ')[0] || (isAuthenticated ? 'friend' : 'there');
+  const userName = (data.profile?.name || currentUser?.name || (isAuthenticated ? 'friend' : 'there')).trim().split(' ')[0] || (isAuthenticated ? 'friend' : 'there');
 
   return (
     <div className="page-stack">
@@ -164,7 +166,32 @@ export function DashboardPage() {
         </div>
       )}
 
-      {!isAuthenticated && !isAuthLoading && (
+      {authStatus === 'CONNECTION_ERROR' && (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: '10px',
+            background: '#fff1f2',
+            border: '1px solid #fecdd3',
+            color: '#9f1239',
+            fontSize: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <strong>Cloud Connection Unavailable:</strong> We could not connect to your NutriTrack health cloud. Your session is preserved safely.
+          </div>
+          <Button size="sm" tone="primary" onClick={() => void retryConnection()}>
+            Retry Connection
+          </Button>
+        </div>
+      )}
+
+      {authStatus === 'UNAUTHENTICATED' && !isAuthenticated && (
         <div
           className="demo-banner"
           style={{

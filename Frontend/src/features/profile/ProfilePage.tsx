@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { Bell, Check, CircleHelp, Database, Download, FileLock2, LockKeyhole, LogIn, LogOut, Mail, Smartphone, Trash2, UserRound } from 'lucide-react';
+import { Bell, Check, CircleHelp, Database, Download, FileLock2, Loader2, LockKeyhole, LogIn, LogOut, Mail, Smartphone, Trash2, UserRound } from 'lucide-react';
 import { useApp } from '@/app/AppContext';
 import { Button, Card, FieldError, PageHeader, StatusPill } from '@/components/ui';
 import { ageFromBirthDate, calculateMacrosForCalories, displayToKg, estimateMaintenanceCalories, getGoalForDate, suggestedTargetCalories, todayISO, fallbackGoal } from '@/utils/nutrition';
@@ -44,8 +44,8 @@ const heightDisplay = (cm: number, unit: 'cm' | 'ft-in') => unit === 'ft-in' ? c
 export function ProfilePage() {
   const { data, askConfirm, pushToast, currentUser, isAuthenticated, openAuthModal, logout, saveProfile, saveGoal } = useApp();
   const defaultProfile: UserProfile = {
-    name: currentUser?.name || 'User',
-    email: currentUser?.email || '',
+    name: data.profile?.name || currentUser?.name || 'User',
+    email: currentUser?.email || data.profile?.email || '',
     dateOfBirth: '2000-01-01',
     heightCm: 170,
     currentWeightKg: 70,
@@ -63,6 +63,7 @@ export function ProfilePage() {
   const [reminders, setReminders] = useState(false);
   const [canInstall, setCanInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setIsStandalone(isPwaStandalone());
@@ -128,6 +129,7 @@ export function ProfilePage() {
     }
 
     const doSave = async () => {
+      setIsSaving(true);
       try {
         await saveProfile(saved);
         if (nextGoal) {
@@ -146,6 +148,8 @@ export function ProfilePage() {
           title: 'Failed to update profile',
           detail: err instanceof Error ? err.message : 'Please check your inputs and try again.'
         });
+      } finally {
+        setIsSaving(false);
       }
     };
 
@@ -181,7 +185,7 @@ export function ProfilePage() {
     )}
     <div className="profile-layout"><Card className="profile-form-card"><div className="card-heading"><div><p className="eyebrow">PERSONAL DETAILS</p><h2>About you</h2><p className="card-subtitle">Age is calculated automatically from your date of birth.</p></div><span className="soft-icon green-soft"><UserRound size={18} /></span></div>
       <form onSubmit={onSave} className="form-stack"><div className="form-grid form-grid-2"><label className="field"><span>Name</span><input autoComplete="name" {...register('name')} />{errors.name && <FieldError>{errors.name.message}</FieldError>}</label><label className="field"><span>Email <small>optional in this prototype</small></span><input type="email" autoComplete="email" {...register('email')} />{errors.email && <FieldError>{errors.email.message}</FieldError>}</label><label className="field"><span>Date of birth</span><input type="date" max={todayISO()} {...register('dateOfBirth')} />{errors.dateOfBirth && <FieldError>{errors.dateOfBirth.message}</FieldError>}</label><label className="field"><span>Calculated age</span><input value={currentAge === null ? 'Add a valid date of birth' : `${currentAge} years`} readOnly aria-label="Automatically calculated age" /></label><label className="field"><span>Height <small>{heightUnit === 'cm' ? 'cm' : 'decimal feet'}</small></span><input type="number" min="1" max={heightUnit === 'cm' ? 280 : 280 / 30.48} step="any" inputMode="decimal" {...register('heightValue', { valueAsNumber: true })} />{errors.heightValue && <FieldError>{errors.heightValue.message}</FieldError>}</label><label className="field"><span>Height unit</span><select {...register('heightUnit')} value={heightUnit} onChange={(event) => changeHeightUnit(event.target.value as HeightUnit)}><option value="cm">Centimetres</option><option value="ft-in">Feet & inches (enter decimal feet)</option></select></label><label className="field"><span>Current weight <small>{weightUnit}</small></span><input type="number" min="1" max="700" step="any" inputMode="decimal" {...register('currentWeight', { valueAsNumber: true })} />{errors.currentWeight && <FieldError>{errors.currentWeight.message}</FieldError>}</label><label className="field"><span>Preferred weight unit</span><select {...register('weightUnit')} value={weightUnit} onChange={(event) => changeWeightUnit(event.target.value as WeightUnit)}><option value="kg">Kilograms (kg)</option><option value="lb">Pounds (lb)</option></select></label><label className="field"><span>Biological sex <small>only used for some calorie estimates</small></span><select {...register('biologicalSex')}><option value="unspecified">Prefer not to say</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other / use general estimate</option></select></label><label className="field"><span>Activity level</span><select {...register('activityLevel')}><option value="sedentary">Mostly sitting</option><option value="light">Light activity</option><option value="moderate">Moderately active</option><option value="active">Very active</option><option value="very-active">Highly active</option></select></label><label className="field"><span>Goal <small>changes take effect today</small></span><select {...register('goalType')}><option value="lose">Weight loss</option><option value="maintain">Maintenance</option><option value="gain">Weight gain</option><option value="muscle">Muscle building</option></select></label><label className="field"><span>Target weight <small>{weightUnit}</small></span><input type="number" min="1" max="700" step="any" inputMode="decimal" {...register('targetWeight', { valueAsNumber: true })} />{errors.targetWeight && <FieldError>{errors.targetWeight.message}</FieldError>}</label></div>
-        <div className="estimate-disclaimer"><CircleHelp size={15} /><p>Calorie estimates are approximate and are not medical advice. Biological sex is optional and is used only if selected for a formula.</p></div><div className="form-footer"><span>Updated {profile.profileUpdatedAt}</span><Button type="submit" disabled={isSubmitting}><Check size={16} /> Save profile</Button></div>
+        <div className="estimate-disclaimer"><CircleHelp size={15} /><p>Calorie estimates are approximate and are not medical advice. Biological sex is optional and is used only if selected for a formula.</p></div><div className="form-footer"><span>Updated {profile.profileUpdatedAt}</span><Button type="submit" disabled={isSubmitting || isSaving}>{isSubmitting || isSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {isSubmitting || isSaving ? 'Saving profile…' : 'Save profile'}</Button></div>
       </form></Card>
 
       <div className="profile-side-stack"><Card className="settings-card"><div className="card-heading"><div><p className="eyebrow">PREFERENCES</p><h2>Daily support</h2></div><span className="soft-icon coral-soft"><Bell size={18} /></span></div><div className="setting-row"><div className="setting-icon"><Bell size={16} /></div><div className="setting-copy"><strong>Daily nudge</strong><span>Optional reminder preference for this prototype.</span></div><button type="button" className={`toggle-switch ${reminders ? 'on' : ''}`} role="switch" aria-checked={reminders} aria-label="Enable daily nudge" onClick={() => { setReminders((value) => !value); pushToast({ tone: 'info', title: reminders ? 'Reminder preference off' : 'Reminder preference on', detail: 'No notifications are sent in this frontend demo.' }); }}><i /></button></div><div className="setting-row"><div className="setting-icon"><Database size={16} /></div><div className="setting-copy"><strong>Local prototype storage</strong><span>Structured records are stored in this browser only. Not secure production storage.</span></div><StatusPill tone="warning">Local</StatusPill></div><div className="setting-row"><div className="setting-icon"><FileLock2 size={16} /></div><div className="setting-copy"><strong>Scanner privacy</strong><span>Food images remain in memory and are never stored or uploaded in mock mode.</span></div><StatusPill tone="success">On device</StatusPill></div><div className="setting-row"><div className="setting-icon"><Smartphone size={16} /></div><div className="setting-copy"><strong>Progressive Web App</strong><span>Install to your home screen or desktop for fast, standalone access.</span></div>{canInstall ? (<Button size="sm" type="button" onClick={() => void promptPwaInstall()}><Download size={14} /> Install</Button>) : isStandalone ? (<StatusPill tone="success">Installed</StatusPill>) : (<StatusPill tone="neutral">Ready</StatusPill>)}</div></Card>
@@ -196,8 +200,8 @@ export function ProfilePage() {
           <div className="account-state">
             <span className="account-state-icon"><Mail size={17} /></span>
             <div>
-              <strong>{isAuthenticated ? (currentUser?.name || 'Connected user') : 'No account connected'}</strong>
-              <span>{isAuthenticated ? (currentUser?.email || 'Logged in to backend') : 'Running in local guest mode.'}</span>
+              <strong>{isAuthenticated ? (data.profile?.name || currentUser?.name || 'Connected user') : 'No account connected'}</strong>
+              <span>{isAuthenticated ? (currentUser?.email || data.profile?.email || 'Logged in to backend') : 'Running in local guest mode.'}</span>
             </div>
           </div>
           <p className="subtle-note">

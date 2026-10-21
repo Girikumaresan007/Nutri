@@ -33,6 +33,8 @@ interface AuthModalState { open: boolean; mode: 'login' | 'register' }
 interface ConfirmState { title: string; message: string; confirmLabel?: string; onConfirm: () => void }
 interface ToastMessage { id: string; title: string; detail?: string; tone: 'success' | 'error' | 'info' }
 
+export type AuthStatus = 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'CONNECTION_ERROR';
+
 interface AppContextValue {
   data: AppData;
   setData: (value: AppData | ((current: AppData) => AppData)) => void;
@@ -49,8 +51,10 @@ interface AppContextValue {
   openAuthModal: (mode?: 'login' | 'register') => void;
   closeAuthModal: () => void;
   currentUser: UserSummary | null;
+  authStatus: AuthStatus;
   isAuthenticated: boolean;
   isAuthLoading: boolean;
+  retryConnection: () => Promise<void>;
   login: (credentials: LoginRequest) => Promise<void>;
   register: (data: RegisterRequest) => Promise<void>;
   logout: () => Promise<void>;
@@ -84,7 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Data starts clean and empty during authentication check; guest localStorage is only loaded if unauthenticated
   const [data, setData] = useState<AppData>(emptyAppData);
   const [currentUser, setCurrentUser] = useState<UserSummary | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('INITIALIZING');
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [dailySummary, setDailySummary] = useState<BackendDailySummaryResponse | null>(null);
   const [isFoodLoading, setIsFoodLoading] = useState(false);
@@ -97,13 +101,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Sequence ref to prevent out-of-order responses from overwriting newer dates
   const foodRequestSeq = useRef(0);
+  const profileRequestSeq = useRef(0);
+  const hasRestoredRef = useRef(false);
 
-  // Preserve guest data in local storage only when unauthenticated and initial auth restoration has completed
+  const isAuthenticated = authStatus === 'AUTHENTICATED' && Boolean(currentUser);
+  const isAuthLoading = authStatus === 'INITIALIZING';
+
+  // Preserve guest data in local storage ONLY when definitively unauthenticated
   useEffect(() => {
-    if (!currentUser && !isAuthLoading) {
+    if (authStatus === 'UNAUTHENTICATED' && !currentUser) {
       repository.save(data);
     }
-  }, [data, currentUser, isAuthLoading]);
+  }, [data, currentUser, authStatus]);
 
   const pushToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = makeId();
@@ -115,25 +124,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Synchronize Profile & Goals whenever user is authenticated
   const refreshProfileAndGoals = useCallback(async () => {
+    const currentSeq = ++profileRequestSeq.current;
     try {
       const [profRes, goalsRes] = await Promise.allSettled([
         profileApi.get(),
         goalsApi.list(),
       ]);
 
-      setData((current) => {
-        let profile = current.profile;
-        if (profRes.status === 'fulfilled' && profRes.value) {
-          profile = toFrontendProfile(profRes.value);
-        }
+      if (currentSeq !== profileRequestSeq.current) {
+        return;
+      }
 
-        let goals = current.goals;
-        if (goalsRes.status === 'fulfilled' && goalsRes.value) {
-          goals = goalsRes.value.map(toFrontendGoal);
-        }
+      let fetchedProfile: UserProfile | null = null;
+      let fetchedGoals: NutritionGoal[] | null = null;
 
-        return { ...current, profile, goals };
-      });
+      if (profRes.status === 'fulfilled' && profRes.value) {
+        fetchedProfile = toFrontendProfile(profRes.value);
+      }
+
+      if (goalsRes.status === 'fulfilled' && goalsRes.value) {
+        fetchedGoals = goalsRes.value.map(toFrontendGoal);
+      }
+
+      setData((current) => ({
+        ...current,
+        profile: fetchedProfile ?? current.profile,
+        goals: fetchedGoals ?? current.goals,
+      }));
+
+      if (fetchedProfile) {
+        const profileToSync = fetchedProfile;
+        setCurrentUser((current) => (current ? { ...current, name: profileToSync.name, email: profileToSync.email || current.email } : null));
+      }
     } catch {
       // Keep existing state on error
     }
@@ -233,73 +255,91 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [currentUser]);
 
-  // Attempt session restoration on initial mount using silent refresh
-  useEffect(() => {
-    let active = true;
-    authApi.refresh()
-      .then(async (res) => {
-        if (!active) return;
-        if (res?.user) {
-          setCurrentUser(res.user);
-          // Eagerly prefetch profile, goals, food entries & daily summary in parallel
-          // so dashboard data is 100% verified and loaded BEFORE isAuthLoading becomes false!
-          try {
-            await Promise.allSettled([
-              refreshProfileAndGoals(),
-              refreshFoodAndSummary(selectedDate),
-              refreshWorkouts(),
-              refreshWeights(),
-            ]);
-          } catch {
-            // Non-fatal sync error
-          }
-        } else {
-          // Unauthenticated guest mode: load local guest state
-          setData(repository.load() ?? emptyAppData);
+  // Core deterministic session restoration flow
+  const restoreSessionAndSync = useCallback(async () => {
+    try {
+      const result = await authApi.restoreSession();
+      if (result.status === 'SUCCESS') {
+        const user = result.data.user;
+        setCurrentUser(user);
+        // Eagerly prefetch verified cloud data in parallel
+        try {
+          await Promise.allSettled([
+            refreshProfileAndGoals(),
+            refreshFoodAndSummary(selectedDate),
+            refreshWorkouts(),
+            refreshWeights(),
+          ]);
+        } catch {
+          // Non-fatal sync
         }
-      })
-      .catch(() => {
-        if (!active) return;
-        // Network failure / guest mode: load local guest state
-        setData(repository.load() ?? emptyAppData);
-      })
-      .finally(() => {
-        if (active) setIsAuthLoading(false);
-      });
-
-    setOnSessionExpired(() => {
-      if (active) {
+        setAuthStatus('AUTHENTICATED');
+      } else if (result.status === 'UNAUTHENTICATED') {
         setCurrentUser(null);
         setDailySummary(null);
-        repository.clear();
-        setData(emptyAppData);
-        pushToast({ tone: 'info', title: 'Session expired', detail: 'Please sign in again to sync with your account.' });
+        setData(repository.load() ?? emptyAppData);
+        setAuthStatus('UNAUTHENTICATED');
+      } else {
+        // CONNECTION_ERROR: Server offline or timeout — PRESERVE STATE and do NOT wipe session!
+        setAuthStatus('CONNECTION_ERROR');
+        pushToast({
+          tone: 'error',
+          title: 'Cloud connection unavailable',
+          detail: 'Unable to reach health server. Tap Retry Connection when ready.',
+        });
       }
-    });
-
-    return () => {
-      active = false;
-      setOnSessionExpired(null);
-    };
-  }, [pushToast, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate]);
-
-  useEffect(() => {
-    if (currentUser) {
-      void refreshProfileAndGoals();
-      void refreshFoodAndSummary(selectedDate);
-      void refreshWorkouts();
-      void refreshWeights();
-    } else if (!isAuthLoading) {
-      setDailySummary(null);
+    } catch {
+      setAuthStatus('CONNECTION_ERROR');
     }
-  }, [currentUser, selectedDate, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, isAuthLoading]);
+  }, [refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate, pushToast]);
+
+  // Run session restoration once on initial app mount
+  useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
+    void restoreSessionAndSync();
+  }, [restoreSessionAndSync]);
+
+  // Hook global session expiration handler (only for genuine 401s when authenticated)
+  useEffect(() => {
+    setOnSessionExpired(() => {
+      setCurrentUser(null);
+      setDailySummary(null);
+      repository.clear();
+      setData(emptyAppData);
+      setAuthStatus('UNAUTHENTICATED');
+      pushToast({ tone: 'info', title: 'Session expired', detail: 'Please sign in again to sync with your account.' });
+    });
+    return () => setOnSessionExpired(null);
+  }, [pushToast]);
+
+  // Synchronize food entries when selected date changes in an authenticated session
+  const dateChangeMountRef = useRef(true);
+  useEffect(() => {
+    if (dateChangeMountRef.current) {
+      dateChangeMountRef.current = false;
+      return;
+    }
+    if (currentUser && authStatus === 'AUTHENTICATED') {
+      void refreshFoodAndSummary(selectedDate);
+    }
+  }, [selectedDate, currentUser, authStatus, refreshFoodAndSummary]);
+
+  const retryConnection = useCallback(async () => {
+    setAuthStatus('INITIALIZING');
+    await restoreSessionAndSync();
+  }, [restoreSessionAndSync]);
 
   const saveProfile = useCallback(async (profile: UserProfile): Promise<UserProfile> => {
+    const currentSeq = ++profileRequestSeq.current;
     if (currentUser) {
       const req = toBackendProfileRequest(profile);
       const res = await profileApi.update(req);
       const updated = toFrontendProfile(res);
-      setData((current) => ({ ...current, profile: updated }));
+      if (currentSeq === profileRequestSeq.current) {
+        setData((current) => ({ ...current, profile: updated }));
+        setCurrentUser((current) => (current ? { ...current, name: updated.name, email: updated.email || current.email } : null));
+      }
       return updated;
     } else {
       setData((current) => ({ ...current, profile }));
@@ -465,6 +505,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     repository.clear();
     setData(emptyAppData);
     setCurrentUser(res.user);
+    setAuthStatus('AUTHENTICATED');
     try {
       await Promise.allSettled([
         refreshProfileAndGoals(),
@@ -483,6 +524,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     repository.clear();
     setData(emptyAppData);
     setCurrentUser(res.user);
+    setAuthStatus('AUTHENTICATED');
     try {
       await Promise.allSettled([
         refreshProfileAndGoals(),
@@ -504,6 +546,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setDailySummary(null);
       repository.clear();
       setData(emptyAppData);
+      setAuthStatus('UNAUTHENTICATED');
       pushToast({ tone: 'info', title: 'Signed out', detail: 'Switched to clean guest mode.' });
     }
   }, [pushToast]);
@@ -625,7 +668,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dailySummary, isFoodLoading, isWorkoutsLoading, isWeightsLoading,
     addFoodModal, openFoodModal, closeFoodModal,
     authModal, openAuthModal, closeAuthModal,
-    currentUser, isAuthenticated: Boolean(currentUser), isAuthLoading,
+    currentUser, authStatus, isAuthenticated, isAuthLoading, retryConnection,
     login, register: registerUser, logout,
     saveProfile, saveGoal, deleteGoal, refreshProfileAndGoals,
     refreshFoodAndSummary, refreshWorkouts, refreshWeights,
@@ -637,7 +680,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     data, selectedDate, dailySummary, isFoodLoading, isWorkoutsLoading, isWeightsLoading,
     addFoodModal, openFoodModal, closeFoodModal,
     authModal, openAuthModal, closeAuthModal,
-    currentUser, isAuthLoading, login, registerUser, logout,
+    currentUser, authStatus, isAuthenticated, isAuthLoading, retryConnection,
+    login, registerUser, logout,
     saveProfile, saveGoal, deleteGoal, refreshProfileAndGoals,
     refreshFoodAndSummary, refreshWorkouts, refreshWeights,
     saveFoodEntry, duplicateFood, removeFood, addFood,

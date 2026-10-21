@@ -25,8 +25,8 @@ export function AppShell() {
   const [canInstall, setCanInstall] = useState(false);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
-  const displayName = currentUser?.name || data.profile?.name || (isAuthenticated ? 'NutriTrack' : 'Guest');
-  const initial = displayName.trim().charAt(0).toUpperCase();
+  const displayName = data.profile?.name?.trim() || currentUser?.name?.trim() || (isAuthenticated ? 'NutriTrack' : 'Guest');
+  const initial = displayName.charAt(0).toUpperCase() || 'N';
 
   useEffect(() => {
     return subscribeInstallPrompt((available) => {
