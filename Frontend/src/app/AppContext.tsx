@@ -84,10 +84,43 @@ interface AppContextValue {
 
 const Context = createContext<AppContextValue | null>(null);
 
+const SESSION_CACHE_KEY = 'nutritrack.auth.session_hint.v1';
+
+interface SessionHint {
+  name: string;
+  email: string;
+}
+
+function getStoredSessionHint(): SessionHint | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SESSION_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSessionHint(hint: SessionHint | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (hint) {
+      window.localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(hint));
+    } else {
+      window.localStorage.removeItem(SESSION_CACHE_KEY);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   // Data starts clean and empty during authentication check; guest localStorage is only loaded if unauthenticated
   const [data, setData] = useState<AppData>(emptyAppData);
-  const [currentUser, setCurrentUser] = useState<UserSummary | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserSummary | null>(() => {
+    const hint = getStoredSessionHint();
+    return hint ? { id: '', name: hint.name, email: hint.email } : null;
+  });
   const [authStatus, setAuthStatus] = useState<AuthStatus>('INITIALIZING');
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [dailySummary, setDailySummary] = useState<BackendDailySummaryResponse | null>(null);
@@ -255,6 +288,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [currentUser]);
 
+  const isRetryingRef = useRef(false);
+
   // Core deterministic session restoration flow
   const restoreSessionAndSync = useCallback(async () => {
     try {
@@ -262,6 +297,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (result.status === 'SUCCESS') {
         const user = result.data.user;
         setCurrentUser(user);
+        saveSessionHint({ name: user.name, email: user.email });
         // Eagerly prefetch verified cloud data in parallel
         try {
           await Promise.allSettled([
@@ -275,6 +311,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         setAuthStatus('AUTHENTICATED');
       } else if (result.status === 'UNAUTHENTICATED') {
+        saveSessionHint(null);
         setCurrentUser(null);
         setDailySummary(null);
         setData(repository.load() ?? emptyAppData);
@@ -303,6 +340,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Hook global session expiration handler (only for genuine 401s when authenticated)
   useEffect(() => {
     setOnSessionExpired(() => {
+      saveSessionHint(null);
       setCurrentUser(null);
       setDailySummary(null);
       repository.clear();
@@ -326,8 +364,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [selectedDate, currentUser, authStatus, refreshFoodAndSummary]);
 
   const retryConnection = useCallback(async () => {
+    if (isRetryingRef.current) return;
+    isRetryingRef.current = true;
     setAuthStatus('INITIALIZING');
-    await restoreSessionAndSync();
+    try {
+      await restoreSessionAndSync();
+    } finally {
+      isRetryingRef.current = false;
+    }
   }, [restoreSessionAndSync]);
 
   const saveProfile = useCallback(async (profile: UserProfile): Promise<UserProfile> => {
@@ -503,6 +547,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (credentials: LoginRequest) => {
     const res = await authApi.login(credentials);
     repository.clear();
+    saveSessionHint({ name: res.user.name, email: res.user.email });
     setData(emptyAppData);
     setCurrentUser(res.user);
     setAuthStatus('AUTHENTICATED');
@@ -522,6 +567,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const registerUser = useCallback(async (req: RegisterRequest) => {
     const res = await authApi.register(req);
     repository.clear();
+    saveSessionHint({ name: res.user.name, email: res.user.email });
     setData(emptyAppData);
     setCurrentUser(res.user);
     setAuthStatus('AUTHENTICATED');
@@ -542,6 +588,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       await authApi.logout();
     } finally {
+      saveSessionHint(null);
       setCurrentUser(null);
       setDailySummary(null);
       repository.clear();

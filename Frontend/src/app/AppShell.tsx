@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { Activity, Bell, BookOpen, ChartNoAxesColumnIncreasing, ChevronDown, ChevronLeft, ChevronRight, Download, Dumbbell, Ellipsis, LayoutDashboard, Leaf, LogIn, LogOut, Plus, ScanLine, Settings2, Target, UserRound } from 'lucide-react';
+import { Activity, Bell, BookOpen, ChartNoAxesColumnIncreasing, ChevronDown, ChevronLeft, ChevronRight, Download, Dumbbell, Ellipsis, LayoutDashboard, Leaf, LogIn, LogOut, Plus, ScanLine, Settings2, Target, UserRound, RefreshCw, Loader2 } from 'lucide-react';
 import { AddFoodModal } from '@/components/AddFoodModal';
 import { AuthModal } from '@/components/AuthModal';
 import { GlobalFeedback, Modal } from '@/components/ui';
@@ -18,14 +18,20 @@ const navItems = [
 ];
 
 export function AppShell() {
-  const { data, openFoodModal, pushToast, currentUser, isAuthenticated, openAuthModal, logout } = useApp();
+  const { data, openFoodModal, pushToast, currentUser, authStatus, isAuthenticated, openAuthModal, logout, retryConnection } = useApp();
   const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [canInstall, setCanInstall] = useState(false);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
-  const displayName = data.profile?.name?.trim() || currentUser?.name?.trim() || (isAuthenticated ? 'NutriTrack' : 'Guest');
+
+  const isConnecting = authStatus === 'INITIALIZING';
+  const hasUserSession = Boolean(currentUser);
+  const isReconnecting = authStatus === 'CONNECTION_ERROR' && hasUserSession;
+  const isUnauthenticated = authStatus === 'UNAUTHENTICATED' && !hasUserSession;
+
+  const displayName = data.profile?.name?.trim() || currentUser?.name?.trim() || (isUnauthenticated ? 'Guest' : 'NutriTrack');
   const initial = displayName.charAt(0).toUpperCase() || 'N';
 
   useEffect(() => {
@@ -106,14 +112,14 @@ export function AppShell() {
         <div className="sidebar-tip"><span className="tip-leaf"><Leaf size={15} /></span><p><strong>Small steps add up.</strong><span>Stay curious about your habits.</span></p></div>
         <div
           className="sidebar-account"
-          onClick={() => { if (!isAuthenticated) openAuthModal('login'); }}
-          style={{ cursor: !isAuthenticated ? 'pointer' : 'default' }}
-          title={!isAuthenticated ? 'Click to sign in or register' : undefined}
+          onClick={() => { if (isUnauthenticated) openAuthModal('login'); }}
+          style={{ cursor: isUnauthenticated ? 'pointer' : 'default' }}
+          title={isUnauthenticated ? 'Click to sign in or register' : undefined}
         >
           <div className="avatar">{initial}</div>
           <div className="account-meta">
             <strong>{displayName}</strong>
-            <span>{isAuthenticated ? 'Connected account' : 'Local guest mode (click to sign in)'}</span>
+            <span>{isAuthenticated ? 'Connected account' : isReconnecting ? 'Session preserved (offline)' : isConnecting ? 'Connecting…' : 'Local guest mode (click to sign in)'}</span>
           </div>
           <ChevronDown size={15} />
         </div>
@@ -125,7 +131,45 @@ export function AppShell() {
         <div className="mobile-brand"><span className="brand-mark"><Leaf size={16} /></span><span>nutri<span>track</span></span></div>
         <div className="topbar-context"><span className="context-dot" /> Your wellbeing, in focus</div>
         <div className="topbar-actions">
-          {!isAuthenticated ? (
+          {isReconnecting ? (
+            <button
+              type="button"
+              className="btn-header-reconnect"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                background: '#fff1f2',
+                color: '#9f1239',
+                border: '1px solid #fecdd3',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+              onClick={() => void retryConnection()}
+              title="Cloud connection unavailable. Tap to retry."
+            >
+              <RefreshCw size={13} /> Reconnect
+            </button>
+          ) : isConnecting ? (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                background: 'rgba(36, 76, 58, 0.08)',
+                color: '#244c3a',
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+              }}
+            >
+              <Loader2 size={13} className="spin" /> Connecting…
+            </div>
+          ) : isUnauthenticated ? (
             <button
               type="button"
               className="btn-header-signin"
@@ -165,12 +209,12 @@ export function AppShell() {
               <div className="avatar">{initial}</div>
               <div>
                 <strong>{displayName}</strong>
-                <span>{currentUser?.email || data.profile?.email || 'Local guest mode'}</span>
+                <span>{currentUser?.email || data.profile?.email || (isUnauthenticated ? 'Local guest mode' : 'Session preserved')}</span>
               </div>
             </div>
             <NavLink role="menuitem" to="/profile" onClick={() => setProfileOpen(false)}><UserRound size={16} /> Profile &amp; settings</NavLink>
             <NavLink role="menuitem" to="/goals" onClick={() => setProfileOpen(false)}><Target size={16} /> Goals</NavLink>
-            {isAuthenticated ? (
+            {isAuthenticated || isReconnecting ? (
               <button
                 role="menuitem"
                 type="button"
@@ -180,7 +224,7 @@ export function AppShell() {
               >
                 <LogOut size={16} /> Sign out
               </button>
-            ) : (
+            ) : isUnauthenticated ? (
               <button
                 role="menuitem"
                 type="button"
@@ -190,7 +234,7 @@ export function AppShell() {
               >
                 <LogIn size={16} /> Sign in / Register
               </button>
-            )}
+            ) : null}
           </div>}
         </div>
       </header>

@@ -27,4 +27,10 @@ public class RefreshToken extends AuditedEntity {
 
     @Column(name = "revoked_at")
     private Instant revokedAt;
+
+    @Column(name = "successor_token_encrypted", length = 512)
+    private String successorTokenEncrypted;
+
+    @Column(name = "client_proof")
+    private String clientProof;
 }

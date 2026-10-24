@@ -87,7 +87,7 @@ public class AuthService {
         if (clientKey != null && !clientKey.isBlank()) {
             limiter.check("refresh:" + clientKey, limits.authAttempts() * 3, limits.authWindow());
         }
-        RefreshTokenService.Rotation rotation = refreshTokens.rotate(rawRefreshToken);
+        RefreshTokenService.Rotation rotation = refreshTokens.rotate(rawRefreshToken, clientKey);
         User user = users.findById(rotation.userId())
                 .orElseThrow(() -> ApiException.unauthorized("INVALID_REFRESH_TOKEN", "Session expired. Please sign in again."));
         return new AuthResult(response(user, nameOf(user.getId())), rotation.newToken());

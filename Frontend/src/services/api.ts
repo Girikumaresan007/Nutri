@@ -81,6 +81,27 @@ export function setOnSessionExpired(cb: (() => void) | null): void {
 const CSRF_HEADER_NAME = 'X-Requested-With';
 const CSRF_HEADER_VALUE = 'NutriTrack';
 
+const CLIENT_PROOF_HEADER_NAME = 'X-Client-Proof';
+
+// Persistent client/device proof — random UUID generated once per browser profile.
+// Note: This is an opaque entropy identifier for rotation binding and contains ZERO tokens or credentials.
+export function getClientProof(): string {
+  if (typeof window === 'undefined') return 'server-side';
+  try {
+    const key = 'nt_device_session_proof';
+    let proof = localStorage.getItem(key);
+    if (!proof) {
+      proof = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'dev_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      localStorage.setItem(key, proof);
+    }
+    return proof;
+  } catch {
+    return 'ephemeral_' + Math.random().toString(36).substring(2);
+  }
+}
+
 const configuredBase = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
 // On Vercel deployments (or when configured base is empty), use same-origin relative paths to route through Vercel's reverse proxy rewrite.
 // This guarantees first-party cookie persistence and avoids all 3rd-party cookie blocking in Chrome, Safari, and Android PWAs.
@@ -92,6 +113,7 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
   skipAuth?: boolean;
   requiresCsrf?: boolean;
+  timeoutMs?: number;
 }
 
 export type RefreshResult =
@@ -137,7 +159,7 @@ export async function performRefresh(attempt = 1): Promise<RefreshResult> {
     const maxAttempts = 2;
 
     for (let currentAttempt = attempt; currentAttempt <= maxAttempts; currentAttempt++) {
-      const { signal, cleanup } = createTimeoutSignal(35000);
+      const { signal, cleanup } = createTimeoutSignal(45000);
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -146,6 +168,7 @@ export async function performRefresh(attempt = 1): Promise<RefreshResult> {
           headers: {
             Accept: 'application/json',
             [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
+            [CLIENT_PROOF_HEADER_NAME]: getClientProof(),
           },
         });
         cleanup();
@@ -220,9 +243,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     headers.set('Accept', 'application/json');
   }
 
-  // Mandatory CSRF header for endpoints that require it (e.g. refresh, logout)
-  if (options.requiresCsrf) {
+  const isAuthEndpoint = path.includes('/api/v1/auth/login') || path.includes('/api/v1/auth/register') || path.includes('/api/v1/auth/refresh');
+
+  // Mandatory CSRF and client proof headers for auth/mutation endpoints
+  if (options.requiresCsrf || isAuthEndpoint) {
     headers.set(CSRF_HEADER_NAME, CSRF_HEADER_VALUE);
+    headers.set(CLIENT_PROOF_HEADER_NAME, getClientProof());
   }
 
   let body: BodyInit | undefined;
@@ -246,8 +272,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     headers.set('Authorization', `Bearer ${tokenUsed}`);
   }
 
-  // Set a 30s timeout on standard application requests
-  const { signal: timeoutSignal, cleanup: cleanupTimeout } = createTimeoutSignal(30000, options.signal);
+  const timeoutMs = options.timeoutMs ?? (isAuthEndpoint ? 45000 : 30000);
+  const { signal: timeoutSignal, cleanup: cleanupTimeout } = createTimeoutSignal(timeoutMs, options.signal);
 
   const fetchInit: RequestInit = {
     ...options,
@@ -262,12 +288,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     response = await fetch(url, fetchInit);
   } catch (error) {
     cleanupTimeout();
-    throw new ApiError(0, 'NETWORK_ERROR', error instanceof Error ? error.message : 'Network request failed', path);
+    const isTimeout = error instanceof Error && error.message.includes('timed out');
+    const errCode = isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR';
+    const errMsg = isTimeout
+      ? `Request timed out after ${timeoutMs}ms. The server may be waking up from cold sleep.`
+      : (error instanceof Error ? error.message : 'Network request failed');
+    throw new ApiError(0, errCode, errMsg, path);
   }
   cleanupTimeout();
 
   // Handle 401 Unauthenticated for authenticated requests (with concurrency-safe refresh)
-  const isAuthEndpoint = path.includes('/api/v1/auth/login') || path.includes('/api/v1/auth/register') || path.includes('/api/v1/auth/refresh');
   if (response.status === 401 && !options.skipAuth && !isAuthEndpoint) {
     let newToken: string | null = null;
 
@@ -282,12 +312,17 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (newToken) {
       // Retry original request with verified new token
       headers.set('Authorization', `Bearer ${newToken}`);
-      const { signal: retrySignal, cleanup: cleanupRetry } = createTimeoutSignal(30000, options.signal);
+      const { signal: retrySignal, cleanup: cleanupRetry } = createTimeoutSignal(timeoutMs, options.signal);
       try {
         response = await fetch(url, { ...fetchInit, headers, signal: retrySignal });
       } catch (error) {
         cleanupRetry();
-        throw new ApiError(0, 'NETWORK_ERROR', error instanceof Error ? error.message : 'Network request failed on retry', path);
+        const isTimeout = error instanceof Error && error.message.includes('timed out');
+        const errCode = isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR';
+        const errMsg = isTimeout
+          ? `Request timed out after ${timeoutMs}ms on retry.`
+          : (error instanceof Error ? error.message : 'Network request failed on retry');
+        throw new ApiError(0, errCode, errMsg, path);
       }
       cleanupRetry();
     } else {
@@ -342,13 +377,13 @@ export const api = {
 
 export const authApi = {
   async register(data: RegisterRequest): Promise<AuthResponse> {
-    const res = await api.post<AuthResponse>('/api/v1/auth/register', data, { skipAuth: true });
+    const res = await api.post<AuthResponse>('/api/v1/auth/register', data, { skipAuth: true, timeoutMs: 45000 });
     setAccessToken(res.accessToken);
     return res;
   },
 
   async login(credentials: LoginRequest): Promise<AuthResponse> {
-    const res = await api.post<AuthResponse>('/api/v1/auth/login', credentials, { skipAuth: true });
+    const res = await api.post<AuthResponse>('/api/v1/auth/login', credentials, { skipAuth: true, timeoutMs: 45000 });
     setAccessToken(res.accessToken);
     return res;
   },

@@ -76,6 +76,8 @@ export function AuthModal() {
       if (err instanceof ApiError) {
         if (err.status === 401 || err.code === 'INVALID_CREDENTIALS') {
           setApiError('Incorrect email or password. Please verify your credentials.');
+        } else if (err.code === 'TIMEOUT' || err.message?.includes('timed out')) {
+          setApiError('The health cloud server is waking up from sleep. Please wait a moment and try signing in again.');
         } else {
           setApiError(err.message || 'Unable to sign in. Please try again.');
         }

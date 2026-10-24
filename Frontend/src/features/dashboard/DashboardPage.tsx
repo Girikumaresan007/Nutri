@@ -36,18 +36,23 @@ export function DashboardPage() {
     retryConnection,
   } = useApp();
   const navigate = useNavigate();
+  const isConnecting = authStatus === 'INITIALIZING';
+  const hasUserSession = Boolean(currentUser);
+  const isReconnecting = authStatus === 'CONNECTION_ERROR' && hasUserSession;
+  const isUnauthenticated = authStatus === 'UNAUTHENTICATED' && !hasUserSession;
+
   const entries = data.entries.filter((entry) => entry.date === selectedDate);
   const isSummaryForSelectedDate = Boolean(dailySummary && dailySummary.date === selectedDate);
-  // In authenticated mode, summary is strictly considered loading until verified cloud dailySummary for selectedDate is received
-  const isSummaryLoading = authStatus === 'INITIALIZING' || (isAuthenticated && (!isSummaryForSelectedDate || isFoodLoading));
+  // In authenticated or reconnecting mode, summary is strictly considered loading until verified cloud dailySummary for selectedDate is received
+  const isSummaryLoading = isConnecting || ((isAuthenticated || isReconnecting) && (!isSummaryForSelectedDate || isFoodLoading));
 
   const summary = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.consumed)
     ? dailySummary.consumed
-    : (isAuthenticated ? { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 } : sumNutrition(entries));
-  const goal = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.target)
+    : ((isAuthenticated || isReconnecting) ? { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 } : sumNutrition(entries));
+  const goal = ((isAuthenticated || isReconnecting) && isSummaryForSelectedDate && dailySummary?.target)
     ? toFrontendGoal(dailySummary.target)
     : (getGoalForDate(data.goals, selectedDate) ?? fallbackGoal);
-  const remaining = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.remaining?.calories != null)
+  const remaining = ((isAuthenticated || isReconnecting) && isSummaryForSelectedDate && dailySummary?.remaining?.calories != null)
     ? dailySummary.remaining.calories
     : (goal.dailyCalories - summary.calories);
   const startOfDay = parseISO(`${selectedDate}T12:00:00`);
@@ -84,13 +89,14 @@ export function DashboardPage() {
 
   const trendDescription = `Seven-day calorie intake and target trend. ${thisWeek.map((row) => `${format(parseISO(`${row.date}T12:00:00`), 'EEE, MMM d')}: ${formatNumber(row.calories)} kcal intake, ${formatNumber(row.target)} kcal target`).join('; ')}.`;
   const macros = goal;
-  const userName = (data.profile?.name || currentUser?.name || (isAuthenticated ? 'friend' : 'there')).trim().split(' ')[0] || (isAuthenticated ? 'friend' : 'there');
+  const resolvedName = (data.profile?.name || currentUser?.name || '').trim();
+  const titleGreeting = resolvedName ? `${greeting()}, ${resolvedName.split(' ')[0]}.` : `${greeting()}.`;
 
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="YOUR DAILY RHYTHM"
-        title={`${greeting()}, ${userName}.`}
+        title={titleGreeting}
         subtitle={format(startOfDay, 'EEEE, MMMM d')}
         action={
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', maxWidth: '100%' }}>
@@ -191,7 +197,7 @@ export function DashboardPage() {
         </div>
       )}
 
-      {authStatus === 'UNAUTHENTICATED' && !isAuthenticated && (
+      {isUnauthenticated && (
         <div
           className="demo-banner"
           style={{

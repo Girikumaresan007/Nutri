@@ -47,8 +47,21 @@ public class AuthController {
     @PostMapping("/refresh")
     public ResponseEntity<AuthResponse> refresh(HttpServletRequest http) {
         requireCsrfHeader(http);
-        AuthResult result = auth.refresh(cookies.read(http).orElse(null), http.getRemoteAddr());
+        String clientProof = resolveClientProof(http);
+        AuthResult result = auth.refresh(cookies.read(http).orElse(null), clientProof);
         return withCookie(HttpStatus.OK, result);
+    }
+
+    public static final String CLIENT_PROOF_HEADER = "X-Client-Proof";
+
+    private static String resolveClientProof(HttpServletRequest http) {
+        String headerProof = http.getHeader(CLIENT_PROOF_HEADER);
+        if (headerProof != null && !headerProof.isBlank()) {
+            return headerProof.trim();
+        }
+        String ip = http.getRemoteAddr();
+        String ua = http.getHeader(HttpHeaders.USER_AGENT);
+        return (ip != null ? ip : "unknown-ip") + "|" + (ua != null ? ua : "unknown-ua");
     }
 
     @PostMapping("/logout")
