@@ -115,13 +115,22 @@ function saveSessionHint(hint: SessionHint | null): void {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  // Data starts clean and empty during authentication check; guest localStorage is only loaded if unauthenticated
-  const [data, setData] = useState<AppData>(emptyAppData);
+  // Guests without session hint start immediately in UNAUTHENTICATED mode with local repository data (0 cold start delay)
   const [currentUser, setCurrentUser] = useState<UserSummary | null>(() => {
     const hint = getStoredSessionHint();
     return hint ? { id: '', name: hint.name, email: hint.email } : null;
   });
-  const [authStatus, setAuthStatus] = useState<AuthStatus>('INITIALIZING');
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => {
+    const hint = getStoredSessionHint();
+    return hint ? 'INITIALIZING' : 'UNAUTHENTICATED';
+  });
+  const [data, setData] = useState<AppData>(() => {
+    const hint = getStoredSessionHint();
+    if (!hint) {
+      return repository.load() ?? emptyAppData;
+    }
+    return emptyAppData;
+  });
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [dailySummary, setDailySummary] = useState<BackendDailySummaryResponse | null>(null);
   const [isFoodLoading, setIsFoodLoading] = useState(false);
@@ -291,25 +300,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const isRetryingRef = useRef(false);
 
   // Core deterministic session restoration flow
-  const restoreSessionAndSync = useCallback(async () => {
+  const restoreSessionAndSync = useCallback(async (forceProbe = false) => {
+    const hint = getStoredSessionHint();
+    if (!hint && !forceProbe) {
+      // First-time load or logged-out guest: load local data without blocking on cloud refresh
+      setData(repository.load() ?? emptyAppData);
+      setAuthStatus('UNAUTHENTICATED');
+      return;
+    }
+
     try {
       const result = await authApi.restoreSession();
       if (result.status === 'SUCCESS') {
         const user = result.data.user;
         setCurrentUser(user);
         saveSessionHint({ name: user.name, email: user.email });
-        // Eagerly prefetch verified cloud data in parallel
-        try {
-          await Promise.allSettled([
-            refreshProfileAndGoals(),
-            refreshFoodAndSummary(selectedDate),
-            refreshWorkouts(),
-            refreshWeights(),
-          ]);
-        } catch {
-          // Non-fatal sync
-        }
+        // Immediately promote to AUTHENTICATED so UI is responsive without waterfall delay
         setAuthStatus('AUTHENTICATED');
+        // Eagerly prefetch verified cloud data in parallel in the background
+        void Promise.allSettled([
+          refreshProfileAndGoals(),
+          refreshFoodAndSummary(selectedDate),
+          refreshWorkouts(),
+          refreshWeights(),
+        ]);
       } else if (result.status === 'UNAUTHENTICATED') {
         saveSessionHint(null);
         setCurrentUser(null);
@@ -319,6 +333,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } else {
         // CONNECTION_ERROR: Server offline or timeout — PRESERVE STATE and do NOT wipe session!
         setAuthStatus('CONNECTION_ERROR');
+        setIsFoodLoading(false);
+        setData((current) => {
+          if (current.entries.length === 0) {
+            const cached = repository.load();
+            if (cached && cached.entries.length > 0) {
+              return cached;
+            }
+          }
+          return current;
+        });
         pushToast({
           tone: 'error',
           title: 'Cloud connection unavailable',
@@ -327,6 +351,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     } catch {
       setAuthStatus('CONNECTION_ERROR');
+      setIsFoodLoading(false);
     }
   }, [refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate, pushToast]);
 
@@ -334,7 +359,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
-    void restoreSessionAndSync();
+    const hint = getStoredSessionHint();
+    if (hint) {
+      void restoreSessionAndSync();
+    }
   }, [restoreSessionAndSync]);
 
   // Hook global session expiration handler (only for genuine 401s when authenticated)
@@ -368,7 +396,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     isRetryingRef.current = true;
     setAuthStatus('INITIALIZING');
     try {
-      await restoreSessionAndSync();
+      await restoreSessionAndSync(true);
     } finally {
       isRetryingRef.current = false;
     }
@@ -551,16 +579,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setData(emptyAppData);
     setCurrentUser(res.user);
     setAuthStatus('AUTHENTICATED');
-    try {
-      await Promise.allSettled([
-        refreshProfileAndGoals(),
-        refreshFoodAndSummary(selectedDate),
-        refreshWorkouts(),
-        refreshWeights(),
-      ]);
-    } catch {
-      // Non-fatal sync
-    }
+    void Promise.allSettled([
+      refreshProfileAndGoals(),
+      refreshFoodAndSummary(selectedDate),
+      refreshWorkouts(),
+      refreshWeights(),
+    ]);
     pushToast({ tone: 'success', title: `Welcome back, ${res.user.name.split(' ')[0]}` });
   }, [pushToast, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate]);
 
@@ -571,16 +595,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setData(emptyAppData);
     setCurrentUser(res.user);
     setAuthStatus('AUTHENTICATED');
-    try {
-      await Promise.allSettled([
-        refreshProfileAndGoals(),
-        refreshFoodAndSummary(selectedDate),
-        refreshWorkouts(),
-        refreshWeights(),
-      ]);
-    } catch {
-      // Non-fatal sync
-    }
+    void Promise.allSettled([
+      refreshProfileAndGoals(),
+      refreshFoodAndSummary(selectedDate),
+      refreshWorkouts(),
+      refreshWeights(),
+    ]);
     pushToast({ tone: 'success', title: `Welcome to NutriTrack, ${res.user.name.split(' ')[0]}` });
   }, [pushToast, refreshProfileAndGoals, refreshFoodAndSummary, refreshWorkouts, refreshWeights, selectedDate]);
 

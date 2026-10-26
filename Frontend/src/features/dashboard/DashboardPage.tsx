@@ -43,12 +43,12 @@ export function DashboardPage() {
 
   const entries = data.entries.filter((entry) => entry.date === selectedDate);
   const isSummaryForSelectedDate = Boolean(dailySummary && dailySummary.date === selectedDate);
-  // In authenticated or reconnecting mode, summary is strictly considered loading until verified cloud dailySummary for selectedDate is received
-  const isSummaryLoading = isConnecting || ((isAuthenticated || isReconnecting) && (!isSummaryForSelectedDate || isFoodLoading));
+  // Summary is loading only when actively fetching cloud summary for the authenticated user, or during initial connection without local entries
+  const isSummaryLoading = (isConnecting && entries.length === 0) || (isAuthenticated && isFoodLoading && !isSummaryForSelectedDate);
 
   const summary = (isAuthenticated && isSummaryForSelectedDate && dailySummary?.consumed)
     ? dailySummary.consumed
-    : ((isAuthenticated || isReconnecting) ? { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 } : sumNutrition(entries));
+    : sumNutrition(entries);
   const goal = ((isAuthenticated || isReconnecting) && isSummaryForSelectedDate && dailySummary?.target)
     ? toFrontendGoal(dailySummary.target)
     : (getGoalForDate(data.goals, selectedDate) ?? fallbackGoal);
@@ -240,7 +240,9 @@ export function DashboardPage() {
                 <span className="summary-label">DAILY TARGET</span>
                 <div className="skeleton-pulse" style={{ width: '90px', height: '24px', margin: '4px 0 8px' }} />
                 <div className="skeleton-pulse" style={{ width: '130px', height: '20px', borderRadius: '12px' }} />
-                <p className="muted-copy">Synchronizing verified nutrition…</p>
+                <p className="muted-copy">
+                  {isConnecting ? 'Connecting to secure health cloud…' : 'Synchronizing verified nutrition…'}
+                </p>
               </div>
             </div>
           ) : (
