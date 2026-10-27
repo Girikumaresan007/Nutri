@@ -51,8 +51,11 @@ class WorkoutIT extends IntegrationTestBase {
     @Test
     void variantRulesAreEnforced() throws Exception {
         String t = registerUser();
+        postAs(t, "/api/v1/workouts", Map.of("type", "strength", "date", "2025-03-01", "name", "No split", "durationMinutes", 30))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[0].field").value("split"));
         postAs(t, "/api/v1/workouts", Map.of("type", "strength", "date", "2025-03-01", "name", "No exercises", "durationMinutes", 30, "split", "legs"))
-                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[0].field").value("exercises"));
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.name").value("No exercises"))
+                .andExpect(jsonPath("$.exercises.length()").value(0));
         postAs(t, "/api/v1/workouts", Map.of("type", "cardio", "date", "2025-03-01", "name", "No type", "durationMinutes", 30))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[0].field").value("cardioType"));
         postAs(t, "/api/v1/workouts", Map.of("type", "cardio", "date", "2025-03-01", "name", "Bad", "durationMinutes", 0, "cardioType", "running"))

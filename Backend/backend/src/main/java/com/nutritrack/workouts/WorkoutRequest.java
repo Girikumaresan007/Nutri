@@ -17,7 +17,7 @@ import java.util.List;
 
 /**
  * One request shape for both variants of the frontend's WorkoutSession union, discriminated by {@code type}.
- * Strength: split + exercises required. Cardio: cardioType required, distanceKm optional, no exercises.
+ * Strength: split required, exercises optional. Cardio: cardioType required, distanceKm optional, no exercises.
  * estimatedCalories is an ESTIMATE of exercise energy and is kept separate from food intake and targets.
  */
 public record WorkoutRequest(

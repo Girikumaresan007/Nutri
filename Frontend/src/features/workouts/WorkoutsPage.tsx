@@ -29,17 +29,6 @@ const workoutSchema = z.object({
   distanceKm: z.number().min(0, 'Distance cannot be negative.').max(1000, 'Max 1000 km.').optional(),
   notes: z.string().max(1000, 'Notes max 1000 characters.').optional(),
   exercises: z.array(exerciseSchema),
-}).superRefine((data, ctx) => {
-  if (data.type === 'strength') {
-    const validExercises = data.exercises.filter((e) => e.name.trim());
-    if (validExercises.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['name'],
-        message: 'Strength workouts require at least one exercise with a name.',
-      });
-    }
-  }
 });
 
 type WorkoutForm = z.infer<typeof workoutSchema>;
@@ -457,8 +446,8 @@ function WorkoutModal({
           distanceKm: values.distanceKm || undefined,
         });
       } else {
-        const cleanedExercises = values.exercises
-          .filter((exercise) => exercise.name.trim())
+        const cleanedExercises = (values.exercises || [])
+          .filter((exercise) => exercise.name && exercise.name.trim())
           .map((exercise) => ({
             id: makeId(),
             name: exercise.name.trim(),
@@ -472,9 +461,7 @@ function WorkoutModal({
           ...base,
           type: 'strength',
           split: values.split,
-          exercises: cleanedExercises.length
-            ? cleanedExercises
-            : [{ id: makeId(), name: values.name.trim() || 'General Exercise', sets: 3, reps: 10, weightKg: 0 }],
+          exercises: cleanedExercises,
         });
       }
     } catch (err) {
@@ -723,7 +710,12 @@ function WorkoutModal({
           {type === 'strength' && (
             <div className="exercise-editor">
               <div className="section-divider">
-                <span>Exercises</span>
+                <span>
+                  Exercises{' '}
+                  <span style={{ fontWeight: 400, fontSize: '0.8125rem', color: '#738073' }}>
+                    (optional)
+                  </span>
+                </span>
                 <button
                   type="button"
                   className="text-action"

@@ -81,9 +81,6 @@ public class WorkoutService {
         List<FieldIssue> issues = new ArrayList<>();
         if (r.type() == WorkoutType.STRENGTH) {
             if (r.split() == null) issues.add(new FieldIssue("split", "split is required for strength workouts"));
-            if (r.exercises() == null || r.exercises().isEmpty()) {
-                issues.add(new FieldIssue("exercises", "at least one exercise is required for strength workouts"));
-            }
             if (r.cardioType() != null) issues.add(new FieldIssue("cardioType", "not allowed for strength workouts"));
             if (r.distanceKm() != null) issues.add(new FieldIssue("distanceKm", "not allowed for strength workouts"));
         } else {
@@ -111,16 +108,18 @@ public class WorkoutService {
             s.setCardioType(null);
             s.setDistanceKm(null);
             int order = 0;
-            for (ExerciseRequest er : r.exercises()) {
-                WorkoutExercise e = new WorkoutExercise();
-                e.setSession(s);
-                e.setSortOrder(order++);
-                e.setName(er.name().trim());
-                e.setSets(er.sets());
-                e.setReps(er.reps());
-                e.setWeightKg(er.weightKg());
-                e.setNotes(er.notes() == null || er.notes().isBlank() ? null : er.notes().trim());
-                s.getExercises().add(e);
+            if (r.exercises() != null) {
+                for (ExerciseRequest er : r.exercises()) {
+                    WorkoutExercise e = new WorkoutExercise();
+                    e.setSession(s);
+                    e.setSortOrder(order++);
+                    e.setName(er.name().trim());
+                    e.setSets(er.sets());
+                    e.setReps(er.reps());
+                    e.setWeightKg(er.weightKg());
+                    e.setNotes(er.notes() == null || er.notes().isBlank() ? null : er.notes().trim());
+                    s.getExercises().add(e);
+                }
             }
         } else {
             s.setSplit(null);

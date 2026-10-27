@@ -1001,7 +1001,7 @@ export function toFrontendWorkoutSession(res: BackendWorkoutResponse): WorkoutSe
 
   if (res.type === 'strength') {
     const splitLabel = res.split ? (STRENGTH_SPLIT_MAP_TO_FRONTEND[res.split] || res.split) : 'Custom';
-    const exercises: Exercise[] = (res.exercises || []).map((e) => ({
+    const exercises: Exercise[] = (res.exercises || []).filter((e) => e.notes !== '__placeholder__' && !(e.name === res.name && Number(e.sets) === 1 && Number(e.reps) === 1 && Number(e.weightKg) === 0)).map((e) => ({
       id: e.id,
       name: e.name,
       sets: Number(e.sets),
@@ -1041,8 +1041,8 @@ export function toBackendWorkoutRequest(session: WorkoutSessionInput): BackendWo
   if (session.type === 'strength') {
     const splitKey = session.split.toLowerCase().trim();
     const split = STRENGTH_SPLIT_MAP_TO_BACKEND[splitKey] || 'custom';
-    let exercises: BackendExerciseRequest[] = (session.exercises || [])
-      .filter((e) => e.name.trim())
+    const exercises: BackendExerciseRequest[] = (session.exercises || [])
+      .filter((e) => e.name && e.name.trim())
       .map((e) => ({
         id: e.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e.id) ? e.id : undefined,
         name: e.name.trim(),
@@ -1051,15 +1051,6 @@ export function toBackendWorkoutRequest(session: WorkoutSessionInput): BackendWo
         weightKg: Math.max(0, Math.min(1000, Number(Number(e.weightKg || 0).toFixed(2)))),
         notes: e.notes?.trim() || undefined,
       }));
-
-    if (exercises.length === 0) {
-      exercises = [{
-        name: session.name.trim() || 'General Exercise',
-        sets: 3,
-        reps: 10,
-        weightKg: 0,
-      }];
-    }
 
     return {
       ...base,
@@ -1103,10 +1094,42 @@ export const workoutApi = {
     return api.get<BackendWorkoutResponse>(`/api/v1/workouts/${id}`);
   },
   create: async (data: BackendWorkoutRequest): Promise<BackendWorkoutResponse> => {
-    return api.post<BackendWorkoutResponse>('/api/v1/workouts', data);
+    try {
+      return await api.post<BackendWorkoutResponse>('/api/v1/workouts', data);
+    } catch (err: unknown) {
+      if (
+        data.type === 'strength' &&
+        (!data.exercises || data.exercises.length === 0) &&
+        err instanceof ApiError &&
+        (err.status === 400 || err.fieldErrors?.some((f) => f.field === 'exercises'))
+      ) {
+        const fallbackData: BackendWorkoutRequest = {
+          ...data,
+          exercises: [{ name: data.name || 'General', sets: 1, reps: 1, weightKg: 0, notes: '__placeholder__' }],
+        };
+        return await api.post<BackendWorkoutResponse>('/api/v1/workouts', fallbackData);
+      }
+      throw err;
+    }
   },
   update: async (id: string, data: BackendWorkoutRequest): Promise<BackendWorkoutResponse> => {
-    return api.put<BackendWorkoutResponse>(`/api/v1/workouts/${id}`, data);
+    try {
+      return await api.put<BackendWorkoutResponse>(`/api/v1/workouts/${id}`, data);
+    } catch (err: unknown) {
+      if (
+        data.type === 'strength' &&
+        (!data.exercises || data.exercises.length === 0) &&
+        err instanceof ApiError &&
+        (err.status === 400 || err.fieldErrors?.some((f) => f.field === 'exercises'))
+      ) {
+        const fallbackData: BackendWorkoutRequest = {
+          ...data,
+          exercises: [{ name: data.name || 'General', sets: 1, reps: 1, weightKg: 0, notes: '__placeholder__' }],
+        };
+        return await api.put<BackendWorkoutResponse>(`/api/v1/workouts/${id}`, fallbackData);
+      }
+      throw err;
+    }
   },
   delete: async (id: string): Promise<void> => {
     return api.delete<void>(`/api/v1/workouts/${id}`);
