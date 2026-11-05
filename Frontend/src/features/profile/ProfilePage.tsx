@@ -210,8 +210,13 @@ export function ProfilePage() {
               : 'Sign in or register to sync your records with your account.'}
           </p>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+            {canInstall && (
+              <Button type="button" size="sm" tone="secondary" onClick={() => void promptPwaInstall()}>
+                <Download size={14} /> Install app
+              </Button>
+            )}
             {isAuthenticated ? (
-              <button type="button" className="clear-data-button" style={{ borderColor: '#ef4444', color: '#ef4444' }} onClick={() => void logout()}>
+              <button type="button" className="clear-data-button" style={{ borderColor: '#ef4444', color: '#ef4444', marginTop: 0 }} onClick={() => void logout()}>
                 <LogOut size={15} /> Sign out
               </button>
             ) : (
@@ -219,7 +224,7 @@ export function ProfilePage() {
                 <LogIn size={15} /> Sign in / Register
               </Button>
             )}
-            <button type="button" className="clear-data-button" onClick={clearData}>
+            <button type="button" className="clear-data-button" style={{ marginTop: 0 }} onClick={clearData}>
               <Trash2 size={15} /> Clear local records
             </button>
           </div>

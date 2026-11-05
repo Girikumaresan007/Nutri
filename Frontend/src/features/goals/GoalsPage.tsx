@@ -6,7 +6,8 @@ import { format, parseISO } from 'date-fns';
 import { useApp } from '@/app/AppContext';
 import { Button, Card, FieldError, PageHeader, StatusPill } from '@/components/ui';
 import { calculateBmr, calculateMacrosForCalories, displayToKg, estimateMaintenanceCalories, formatNumber, getGoalForDate, suggestedTargetCalories, sumNutrition, todayISO, fallbackGoal } from '@/utils/nutrition';
-import { Activity, ArrowRight, CalendarClock, CircleHelp, Flame, History, Plus, Scale, Target, Trash2, Pencil, Loader2, Utensils } from 'lucide-react';
+import { Activity, ArrowRight, CalendarClock, CircleHelp, Download, Flame, History, LogIn, LogOut, Plus, Scale, Target, Trash2, Pencil, Loader2, Utensils } from 'lucide-react';
+import { promptPwaInstall, subscribeInstallPrompt } from '@/pwa';
 import type { GoalType, NutritionGoal, UserProfile, WeightLog } from '@/types';
 
 const goalSchema = z.object({
@@ -23,7 +24,14 @@ type GoalForm = z.infer<typeof goalSchema>;
 const goalNames: Record<GoalType, string> = { lose: 'Weight loss', maintain: 'Maintenance', gain: 'Weight gain', muscle: 'Muscle building' };
 
 export function GoalsPage() {
-  const { data, saveWeight, removeWeight, isWeightsLoading, pushToast, askConfirm, saveGoal, deleteGoal, isAuthenticated, currentUser } = useApp();
+  const { data, saveWeight, removeWeight, isWeightsLoading, pushToast, askConfirm, saveGoal, deleteGoal, isAuthenticated, currentUser, openAuthModal, logout } = useApp();
+  const [canInstall, setCanInstall] = useState(false);
+
+  useEffect(() => {
+    return subscribeInstallPrompt((available) => {
+      setCanInstall(available);
+    });
+  }, []);
   const hasSavedProfile = Boolean(data.profile);
   const defaultProfile: UserProfile = {
     name: data.profile?.name || currentUser?.name || 'User',
@@ -438,6 +446,36 @@ export function GoalsPage() {
           </div>
 
           <p className="subtle-note">Weight can fluctuate naturally; trends over time are more useful than single readings.</p>
+        </Card>
+
+        <Card className="settings-card account-card">
+          <div className="card-heading">
+            <div>
+              <p className="eyebrow">APP &amp; SESSION</p>
+              <h2>Device &amp; account</h2>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
+            {canInstall && (
+              <Button type="button" size="sm" tone="secondary" onClick={() => void promptPwaInstall()}>
+                <Download size={14} /> Install app
+              </Button>
+            )}
+            {isAuthenticated ? (
+              <button
+                type="button"
+                className="clear-data-button"
+                style={{ borderColor: '#ef4444', color: '#ef4444', marginTop: 0 }}
+                onClick={() => void logout()}
+              >
+                <LogOut size={15} /> Sign out
+              </button>
+            ) : (
+              <Button type="button" size="sm" onClick={() => openAuthModal('login')}>
+                <LogIn size={15} /> Sign in / Register
+              </Button>
+            )}
+          </div>
         </Card>
       </div>
     </div>

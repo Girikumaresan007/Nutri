@@ -6060,3 +6060,149 @@ svg {
   border-radius: 50%;
   background: #ffffff;
 }
+
+/* ==========================================================================
+   Comprehensive Mobile App Responsiveness for Analytics & Charts
+   ========================================================================== */
+@media (max-width: 768px) {
+  /* Card heading stacking & spacing on mobile */
+  .analytics-chart-card .card-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .analytics-chart-card .card-heading h2 {
+    font-size: 16px;
+    letter-spacing: -0.3px;
+    line-height: 1.35;
+  }
+
+  .analytics-chart-card .card-subtitle {
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+
+  /* Make chart legend wrap nicely without clipping */
+  .analytics-chart-card .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    font-size: 11px;
+    margin-top: 4px;
+    width: 100%;
+  }
+
+  /* Compact Recharts Legend inside chart */
+  .recharts-default-legend {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    gap: 4px 10px !important;
+    margin-top: 6px !important;
+    padding: 0 !important;
+  }
+
+  .recharts-legend-item {
+    margin-right: 0 !important;
+    font-size: 11px !important;
+  }
+
+  /* Keep chart container properly sized for touch interactions */
+  .chart-tall {
+    height: 250px !important;
+  }
+
+  .chart-wrap {
+    height: 220px !important;
+  }
+
+  /* Daily macro highlights & stats */
+  .analytics-stat-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  .stat-card {
+    padding: 13px 14px;
+  }
+
+  .stat-value {
+    font-size: 20px;
+  }
+
+  /* Table responsive wrap with smooth mobile scrolling */
+  .analytics-table-wrap {
+    border-radius: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .analytics-table th,
+  .analytics-table td {
+    padding: 9px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  /* Pagination Bar on Mobile */
+  .audit-pagination-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 6px 4px;
+  }
+
+  .audit-pagination-info {
+    text-align: center;
+    font-size: 11.5px;
+  }
+
+  .audit-pagination-actions {
+    justify-content: center;
+    width: 100%;
+  }
+
+  /* Period navigation tabs */
+  .period-tabs {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .period-tabs button {
+    font-size: 11.5px;
+    padding: 8px 2px;
+  }
+}
+
+@media (max-width: 480px) {
+  .analytics-chart-card {
+    padding: 14px 12px 10px !important;
+    border-radius: 16px;
+  }
+
+  .chart-tall {
+    height: 240px !important;
+  }
+
+  .chart-wrap {
+    height: 210px !important;
+  }
+
+  .analytics-table th,
+  .analytics-table td {
+    padding: 8px 8px;
+    font-size: 10.5px;
+  }
+
+  .period-tabs button {
+    font-size: 11px;
+    padding: 7px 0;
+  }
+
+  .nav-controls-row .nav-arrow-btn {
+    width: 28px;
+    height: 28px;
+  }
+}

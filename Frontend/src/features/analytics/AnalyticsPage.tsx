@@ -1281,7 +1281,17 @@ export function AnalyticsPage() {
                     <Tooltip
                       labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ''}
                       formatter={(val, name) => [`${formatNumber(Number(val))} kcal`, name]}
-                      contentStyle={{ border: '1px solid #e5e8df', borderRadius: 12 }}
+                      contentStyle={{
+                        border: '1px solid #e5e8df',
+                        borderRadius: 12,
+                        background: 'rgba(255, 255, 255, 0.96)',
+                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+                        padding: '10px 14px',
+                        fontSize: '12px',
+                        lineHeight: '1.4',
+                        maxWidth: '260px',
+                      }}
+                      wrapperStyle={{ zIndex: 100 }}
                     />
                     <Legend />
                     <Bar dataKey="calories" name="Food intake" fill="#244c3a" radius={[6, 6, 0, 0]} maxBarSize={32} />
@@ -1329,7 +1339,17 @@ export function AnalyticsPage() {
                         tick={{ fill: '#8b918a', fontSize: 10 }}
                       />
                       <YAxis tickLine={false} axisLine={false} tick={{ fill: '#8b918a', fontSize: 10 }} width={36} />
-                      <Tooltip formatter={(value) => [`${formatNumber(Number(value))} g`, '']} />
+                      <Tooltip
+                        formatter={(value) => [`${formatNumber(Number(value))} g`, '']}
+                        contentStyle={{
+                          border: '1px solid #e5e8df',
+                          borderRadius: 12,
+                          background: 'rgba(255, 255, 255, 0.96)',
+                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+                          padding: '8px 12px',
+                          fontSize: '12px',
+                        }}
+                      />
                       <Line dataKey="protein" name="Protein" stroke="#244c3a" strokeWidth={2.4} dot={false} />
                       <Line dataKey="carbohydrates" name="Carbohydrates" stroke="#f08a70" strokeWidth={2.4} dot={false} />
                       <Line dataKey="fat" name="Fat" stroke="#e4a34a" strokeWidth={2.4} dot={false} />
@@ -1383,6 +1403,14 @@ export function AnalyticsPage() {
                       <Tooltip
                         labelFormatter={(val) => format(parseISO(`${String(val)}T12:00:00`), 'MMM d, yyyy')}
                         formatter={(val) => [`${Number(val).toFixed(1)} kg`, 'Weight']}
+                        contentStyle={{
+                          border: '1px solid #e5e8df',
+                          borderRadius: 12,
+                          background: 'rgba(255, 255, 255, 0.96)',
+                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+                          padding: '8px 12px',
+                          fontSize: '12px',
+                        }}
                       />
                       <Line
                         type="monotone"
