@@ -219,47 +219,31 @@ export function AppShell() {
                 role="menuitem"
                 type="button"
                 className="profile-popover-item"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  width: '100%',
-                  padding: '10px 14px',
-                  background: 'none',
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  color: '#244c3a',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                }}
                 onClick={async () => {
                   setProfileOpen(false);
                   await promptPwaInstall();
                 }}
               >
-                <Download size={16} /> Install App
+                <Download size={16} /> <span>Install App</span>
               </button>
             )}
             {isAuthenticated || isReconnecting ? (
               <button
                 role="menuitem"
                 type="button"
-                className="profile-popover-item"
-                style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', color: '#b91c1c', fontSize: '0.875rem' }}
+                className="profile-popover-item danger"
                 onClick={() => { setProfileOpen(false); void logout(); }}
               >
-                <LogOut size={16} /> Sign out
+                <LogOut size={16} /> <span>Sign out</span>
               </button>
             ) : isUnauthenticated ? (
               <button
                 role="menuitem"
                 type="button"
-                className="profile-popover-item"
-                style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', color: '#15803d', fontSize: '0.875rem' }}
+                className="profile-popover-item success"
                 onClick={() => { setProfileOpen(false); openAuthModal('login'); }}
               >
-                <LogIn size={16} /> Sign in / Register
+                <LogIn size={16} /> <span>Sign in / Register</span>
               </button>
             ) : null}
           </div>}

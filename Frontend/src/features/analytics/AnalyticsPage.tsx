@@ -530,7 +530,9 @@ export function AnalyticsPage() {
     ? loggedOnlyIntake.reduce((min, r) => (r.calories < min.calories ? r : min), loggedOnlyIntake[0])
     : null;
 
-  // Target adherence
+  // Target adherence & period budget totals
+  const periodTotalTargetCalories = chartRows.reduce((sum, r) => sum + r.targetCalories, 0);
+  const calorieBudgetDifference = periodTotalCalories - periodTotalTargetCalories;
   const daysOnOrUnder = loggedRows.filter((r) => r.calories <= r.targetCalories).length;
   const daysAboveTarget = loggedRows.filter((r) => r.calories > r.targetCalories).length;
   const targetAdherencePct = loggedDays > 0 ? Math.round((daysOnOrUnder / loggedDays) * 100) : 0;
@@ -1148,10 +1150,10 @@ export function AnalyticsPage() {
               value={`${formatNumber(periodTotalCalories)} kcal`}
               detail={
                 period === 'monthly'
-                  ? `Avg ${formatNumber(averageDailyIntake)} kcal/logged day · ${formatNumber(avgAcrossAllCalendarDays)} kcal/calendar day`
-                  : loggedDays > 0
-                    ? `Avg ${formatNumber(averageDailyIntake)} kcal/day across ${loggedDays} logged ${loggedDays === 1 ? 'day' : 'days'}`
-                    : 'No meal records in range'
+                  ? `Goal: ${formatNumber(periodTotalTargetCalories)} kcal (${rangeDays} days) · Avg: ${formatNumber(averageDailyIntake)} kcal/logged day (${formatNumber(avgAcrossAllCalendarDays)} kcal/day)`
+                  : period === 'weekly'
+                    ? `Goal: ${formatNumber(periodTotalTargetCalories)} kcal (7 days) · Avg: ${formatNumber(averageDailyIntake)} kcal/day`
+                    : `Goal: ${formatNumber(periodTotalTargetCalories)} kcal · Intake: ${formatNumber(periodTotalCalories)} kcal`
               }
               tone="green"
             />
@@ -1185,6 +1187,74 @@ export function AnalyticsPage() {
               tone="gold"
             />
           </div>
+
+          {/* Period Calorie Budget & Adherence Banner */}
+          <Card className="calorie-budget-card">
+            <div className="calorie-budget-header">
+              <div className="calorie-budget-title">
+                <span className="calorie-budget-icon">
+                  <Target size={18} />
+                </span>
+                <div>
+                  <p className="eyebrow">
+                    {period === 'weekly' ? 'WEEKLY CALORIE BUDGET' : period === 'monthly' ? 'MONTHLY CALORIE BUDGET' : 'ANNUAL CALORIE BUDGET'}
+                  </p>
+                  <h3>
+                    Target: <strong>{formatNumber(periodTotalTargetCalories)} kcal</strong> for this {period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'period'}
+                  </h3>
+                </div>
+              </div>
+              <span className={`budget-status-pill ${calorieBudgetDifference <= 0 ? 'budget-under' : 'budget-over'}`}>
+                {calorieBudgetDifference <= 0
+                  ? `${formatNumber(Math.abs(calorieBudgetDifference))} kcal under budget`
+                  : `+${formatNumber(calorieBudgetDifference)} kcal over budget`}
+              </span>
+            </div>
+
+            <div className="calorie-budget-metrics">
+              <div className="budget-metric">
+                <span className="budget-metric-label">Food Intake</span>
+                <strong className="budget-metric-val">{formatNumber(periodTotalCalories)} kcal</strong>
+                <small className="budget-metric-sub">
+                  {periodTotalTargetCalories > 0
+                    ? `${Math.round((periodTotalCalories / periodTotalTargetCalories) * 100)}% of total budget`
+                    : '—'}
+                </small>
+              </div>
+
+              <div className="budget-metric">
+                <span className="budget-metric-label">Workout Burned</span>
+                <strong className="budget-metric-val" style={{ color: '#aa634f' }}>
+                  −{formatNumber(periodTotalBurned)} kcal
+                </strong>
+                <small className="budget-metric-sub">{totalWorkoutsCount} exercise sessions</small>
+              </div>
+
+              <div className="budget-metric">
+                <span className="budget-metric-label">Net Calorie Total</span>
+                <strong className="budget-metric-val" style={{ color: '#244c3a' }}>
+                  {formatNumber(periodTotalNet)} kcal
+                </strong>
+                <small className="budget-metric-sub">
+                  {formatNumber(periodTotalNet - periodTotalTargetCalories)} vs budget
+                </small>
+              </div>
+
+              <div className="budget-metric">
+                <span className="budget-metric-label">Daily Target Basis</span>
+                <strong className="budget-metric-val" style={{ color: '#657363' }}>
+                  ~{formatNumber(Math.round(periodTotalTargetCalories / (rangeDays || 1)))} kcal/day
+                </strong>
+                <small className="budget-metric-sub">
+                  Calculated from your active Goal plan
+                </small>
+              </div>
+            </div>
+
+            <p className="budget-explanation">
+              💡 <strong>Automatic Goal Adjustment:</strong> Whenever you change your goal from <em>Weight loss</em> to <em>Weight gain</em> or <em>Maintenance</em> in <strong>Goals</strong>, the target adapts instantly across all calendar days (e.g. 7 days × {formatNumber(Math.round(periodTotalTargetCalories / (rangeDays || 1)))} kcal/day for Weekly, or {rangeDays} days × daily target for Monthly).
+            </p>
+          </Card>
 
           {/* Highlights Banner: Highs & Lows & Averages */}
           {loggedDays > 0 && (

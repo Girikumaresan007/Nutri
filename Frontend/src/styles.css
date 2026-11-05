@@ -543,20 +543,48 @@ svg {
   text-overflow: ellipsis;
 }
 
-.profile-popover a {
+.profile-popover a,
+.profile-popover-item {
   display: flex;
   align-items: center;
   gap: 9px;
+  width: 100%;
   padding: 10px 9px;
   border-radius: 9px;
+  border: none;
+  background: transparent;
   color: #5f685f;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.profile-popover a:hover {
+.profile-popover a:hover,
+.profile-popover-item:hover {
   color: var(--forest);
   background: #f1f5ee;
+}
+
+.profile-popover-item.danger {
+  color: #b91c1c;
+}
+
+.profile-popover-item.danger:hover {
+  color: #991b1b;
+  background: #fef2f2;
+}
+
+.profile-popover-item.success {
+  color: #15803d;
+}
+
+.profile-popover-item.success:hover {
+  color: #166534;
+  background: #f0fdf4;
 }
 
 .mobile-brand {
@@ -6204,5 +6232,147 @@ svg {
   .nav-controls-row .nav-arrow-btn {
     width: 28px;
     height: 28px;
+  }
+}
+
+/* Calorie Budget & Target Progress Card */
+.calorie-budget-card {
+  padding: 18px 20px 16px;
+  background: #ffffff;
+  border: 1px solid #e3e8df;
+  border-radius: 16px;
+}
+
+.calorie-budget-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf1ea;
+}
+
+.calorie-budget-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.calorie-budget-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #edf4e9;
+  color: #244c3a;
+  flex-shrink: 0;
+}
+
+.calorie-budget-title h3 {
+  margin: 3px 0 0;
+  font-family: 'Manrope', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e3325;
+}
+
+.calorie-budget-title h3 strong {
+  color: #244c3a;
+}
+
+.budget-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.budget-status-pill.budget-under {
+  background: #ecfdf5;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.budget-status-pill.budget-over {
+  background: #fff1f2;
+  color: #be123c;
+  border: 1px solid #fecdd3;
+}
+
+.calorie-budget-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.budget-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: #f8faf7;
+  border: 1px solid #eef2ec;
+  border-radius: 12px;
+}
+
+.budget-metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #657363;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.budget-metric-val {
+  font-family: 'Manrope', sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  color: #2c382b;
+}
+
+.budget-metric-sub {
+  font-size: 11px;
+  color: #889386;
+}
+
+.budget-explanation {
+  margin-top: 14px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #556254;
+  background: #fafcfa;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border-left: 3px solid #244c3a;
+}
+
+@media (max-width: 768px) {
+  .calorie-budget-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .calorie-budget-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .budget-metric {
+    padding: 10px 12px;
+  }
+
+  .budget-metric-val {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .calorie-budget-metrics {
+    grid-template-columns: 1fr;
   }
 }
