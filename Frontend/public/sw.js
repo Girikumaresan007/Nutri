@@ -1,7 +1,7 @@
 // NutriTrack AI — Progressive Web App Service Worker
-// Version: 1.3.0
-const CACHE_NAME = 'nutritrack-shell-v4';
-const STATIC_CACHE = 'nutritrack-static-v4';
+// Version: 1.4.0 (Enhanced MIME safety, safe chunk revalidation & API isolation)
+const CACHE_NAME = 'nutritrack-shell-v5';
+const STATIC_CACHE = 'nutritrack-static-v5';
 
 // Safe, static public shell assets to precache on install
 const PRECACHE_URLS = [
@@ -21,8 +21,8 @@ const PRECACHE_URLS = [
 function isPrivateOrApiRequest(url, request) {
   const pathname = url.pathname;
   
-  // 1. Explicit API endpoints (e.g. /api/v1/*, /api/*)
-  if (pathname.startsWith('/api/') || pathname.includes('/api/v1/')) {
+  // 1. Explicit API and Actuator endpoints (e.g. /api/v1/*, /api/*, /actuator/*)
+  if (pathname.startsWith('/api/') || pathname.includes('/api/v1/') || pathname.startsWith('/actuator/')) {
     return true;
   }
 
@@ -37,7 +37,10 @@ function isPrivateOrApiRequest(url, request) {
     pathname.includes('/scanner') ||
     pathname.includes('/analytics')
   ) {
-    return true;
+    // Only treat as API if not a frontend source asset file (.js, .css, .tsx)
+    if (!pathname.endsWith('.js') && !pathname.endsWith('.css') && !pathname.endsWith('.tsx')) {
+      return true;
+    }
   }
 
   // 3. Authenticated requests with headers
@@ -47,7 +50,6 @@ function isPrivateOrApiRequest(url, request) {
 
   // 4. Non-same-origin API servers (e.g. backend running on another port/host)
   if (url.origin !== self.location.origin) {
-    // If it's not a known CDN or Google Fonts, do not cache
     if (!url.hostname.includes('fonts.googleapis.com') && !url.hostname.includes('fonts.gstatic.com')) {
       return true;
     }
@@ -129,7 +131,6 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         })
         .catch(async () => {
-          // If offline, attempt to serve cached page or shell
           const cachedResponse = await caches.match(request);
           if (cachedResponse) {
             return cachedResponse;
@@ -146,19 +147,42 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Handle Vite Static Hashed Assets (/assets/*)
-  // Strategy: Cache-First with Network Revalidation (content-hashed assets are immutable)
+  // Strategy: Cache-First with Content-Type Verification (Guarantees no HTML is cached as JS!)
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
       caches.open(STATIC_CACHE).then(async (cache) => {
         const cachedResponse = await cache.match(request);
         if (cachedResponse) {
-          return cachedResponse;
+          const cachedType = cachedResponse.headers.get('content-type') || '';
+          // If cached response was inadvertently HTML (from earlier buggy rewrites), evict it immediately!
+          if (!cachedType.includes('text/html')) {
+            return cachedResponse;
+          }
+          await cache.delete(request);
         }
+
         return fetch(request).then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
-            cache.put(request, networkResponse.clone());
+            const contentType = networkResponse.headers.get('content-type') || '';
+            // ONLY cache if it's NOT text/html fallback
+            if (!contentType.includes('text/html')) {
+              cache.put(request, networkResponse.clone());
+              return networkResponse;
+            }
+            // If the server responded with text/html for an asset chunk (stale deployment), return 404
+            return new Response('Asset not found or returned invalid content type.', {
+              status: 404,
+              statusText: 'Not Found',
+              headers: { 'Content-Type': 'text/plain' },
+            });
           }
           return networkResponse;
+        }).catch(async () => {
+          return new Response('Asset unavailable offline.', {
+            status: 404,
+            statusText: 'Not Found',
+            headers: { 'Content-Type': 'text/plain' },
+          });
         });
       })
     );
@@ -172,10 +196,13 @@ self.addEventListener('fetch', (event) => {
       const fetchPromise = fetch(request)
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-            const responseClone = networkResponse.clone();
-            caches.open(STATIC_CACHE).then((cache) => {
-              cache.put(request, responseClone);
-            });
+            const contentType = networkResponse.headers.get('content-type') || '';
+            if (!contentType.includes('text/html') || url.pathname === '/' || url.pathname.endsWith('.html')) {
+              const responseClone = networkResponse.clone();
+              caches.open(STATIC_CACHE).then((cache) => {
+                cache.put(request, responseClone);
+              });
+            }
           }
           return networkResponse;
         })

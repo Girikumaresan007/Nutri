@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { addDays, addMonths, endOfMonth, format, parseISO, startOfMonth, subDays, subMonths } from 'date-fns';
+import {
+  addDays,
+  addMonths,
+  addWeeks,
+  endOfMonth,
+  endOfWeek,
+  format,
+  parseISO,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+  subWeeks,
+} from 'date-fns';
 import {
   AlertCircle,
   ArrowDownRight,
@@ -20,8 +32,20 @@ import {
   Sun,
   Target,
   Utensils,
+  Zap,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { Button, Card, EmptyState, PageHeader, ProgressBar, StatusPill } from '@/components/ui';
 import { useApp } from '@/app/AppContext';
 import { fallbackGoal, formatNumber, getGoalForDate, sumNutrition, todayISO } from '@/utils/nutrition';
@@ -34,20 +58,29 @@ import {
 import type { MealCategory } from '@/types';
 
 type Period = 'daily' | 'weekly' | 'monthly' | 'yearly';
-const periods: Period[] = ['daily', 'weekly', 'monthly', 'yearly'];
+const periods: { key: Period; label: string }[] = [
+  { key: 'daily', label: 'Daily' },
+  { key: 'weekly', label: 'Weekly' },
+  { key: 'monthly', label: 'Monthly' },
+  { key: 'yearly', label: 'Yearly' },
+];
 
-interface ChartRow {
+export interface ChartRow {
   date: string;
   displayLabel: string;
   fullLabel: string;
-  calories: number;
+  calories: number;        // Food intake
+  workoutCalories: number; // Workout calories burned
+  netCalories: number;     // Food intake - workoutCalories
   protein: number;
   carbohydrates: number;
   fat: number;
   fiber: number;
   targetCalories: number;
   logged: boolean;
-  entryCount?: number;
+  entryCount: number;
+  workoutCount: number;
+  workoutMinutes: number;
   loggedDays?: number;
   calendarDays?: number;
   missingDays?: number;
@@ -67,16 +100,20 @@ const MEAL_LABELS: Record<MealCategory, string> = {
   snacks: 'Snacks',
 };
 
+// Helper to compute standard Monday-to-Sunday ISO boundary
+function getWeekBoundary(date: Date) {
+  const from = format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  const to = format(endOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  return { from, to };
+}
+
 export function AnalyticsPage() {
   const { data, isAuthenticated } = useApp();
   const [period, setPeriod] = useState<Period>('daily');
 
   // Date selection states
   const [selectedDay, setSelectedDay] = useState<string>(todayISO());
-  const [range, setRange] = useState({
-    from: format(subDays(new Date(), 6), 'yyyy-MM-dd'),
-    to: todayISO(),
-  });
+  const [range, setRange] = useState(() => getWeekBoundary(new Date()));
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), 'yyyy-MM'));
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
@@ -85,6 +122,10 @@ export function AnalyticsPage() {
   const [periodData, setPeriodData] = useState<BackendPeriodAnalytics | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Daily audit table pagination
+  const [auditPage, setAuditPage] = useState<number>(1);
+  const [auditPageSize, setAuditPageSize] = useState<number>(7);
 
   const rangeValid = Boolean(range.from && range.to && range.from <= range.to);
 
@@ -110,11 +151,12 @@ export function AnalyticsPage() {
           setIsLoading(false);
           return;
         }
-        const diffDays = Math.round(
-          (parseISO(`${range.to}T12:00:00`).getTime() - parseISO(`${range.from}T12:00:00`).getTime()) / 86_400_000
-        ) + 1;
+        const diffDays =
+          Math.round(
+            (parseISO(`${range.to}T12:00:00`).getTime() - parseISO(`${range.from}T12:00:00`).getTime()) / 86_400_000
+          ) + 1;
         if (diffDays > 31) {
-          setLoadError('Custom date range for weekly view cannot exceed 31 days. Please select up to 31 days or switch to Monthly / Yearly.');
+          setLoadError('Custom date range for weekly view cannot exceed 31 days.');
           setIsLoading(false);
           return;
         }
@@ -144,11 +186,26 @@ export function AnalyticsPage() {
     void fetchAnalytics();
   }, [fetchAnalytics]);
 
-  // Daily Navigation helpers
+  // Reset audit table pagination when switching periods or changing dates
+  useEffect(() => {
+    setAuditPage(1);
+  }, [period, range.from, range.to, selectedMonth, selectedYear]);
+
+  // Navigation helpers
   const shiftDay = (days: number) => {
     const current = parseISO(`${selectedDay}T12:00:00`);
     const next = addDays(current, days);
     setSelectedDay(format(next, 'yyyy-MM-dd'));
+  };
+
+  const shiftWeek = (weeks: number) => {
+    const current = parseISO(`${range.from}T12:00:00`);
+    const target = weeks > 0 ? addWeeks(current, weeks) : subWeeks(current, Math.abs(weeks));
+    setRange(getWeekBoundary(target));
+  };
+
+  const setThisWeek = () => {
+    setRange(getWeekBoundary(new Date()));
   };
 
   const shiftMonth = (months: number) => {
@@ -173,20 +230,25 @@ export function AnalyticsPage() {
       const targetFat = dailyData.target?.fat ?? fallbackGoal.fat;
       const targetFiber = dailyData.target?.fiber ?? fallbackGoal.fiber;
 
-      // Remaining allowance is defined as target minus food intake
-      const remainingCals = targetCals - intake.calories;
+      const burnedCals = dailyData.exercise?.estimatedCalories ? Math.round(dailyData.exercise.estimatedCalories) : 0;
+      const netCals = Math.round(intake.calories) - burnedCals;
+      const foodVsTarget = Math.round(intake.calories) - targetCals;
+      const netVsTarget = netCals - targetCals;
 
       return {
         logged: dailyData.logged,
         entryCount: dailyData.entryCount,
         intake,
+        burnedCalories: burnedCals,
+        netCalories: netCals,
+        foodVsTarget,
+        netVsTarget,
         meals: dailyData.meals ?? [],
         targetCalories: targetCals,
         targetProtein,
         targetCarbs,
         targetFat,
         targetFiber,
-        remainingCalories: remainingCals,
         calorieStatus: dailyData.calorieStatus,
         exercise: dailyData.exercise,
         weightKg: dailyData.weightKg,
@@ -195,9 +257,10 @@ export function AnalyticsPage() {
 
     // Guest / Local mode calculation
     const dayEntries = data.entries.filter((entry) => entry.date === selectedDay);
-    const dayNutrition = dayEntries.length ? sumNutrition(dayEntries) : { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 };
+    const dayNutrition = dayEntries.length
+      ? sumNutrition(dayEntries)
+      : { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 };
     const goal = getGoalForDate(data.goals, selectedDay) ?? fallbackGoal;
-    const remaining = goal.dailyCalories - dayNutrition.calories;
 
     const meals: BackendMealSummary[] = MEAL_ORDER.map((mealCat) => {
       const items = dayEntries.filter((e) => e.meal === mealCat);
@@ -215,18 +278,32 @@ export function AnalyticsPage() {
 
     const weightLog = data.weights.find((w) => w.date === selectedDay);
 
+    const burnedCals = workoutKcal;
+    const foodCals = Math.round(dayNutrition.calories);
+    const netCals = foodCals - burnedCals;
+    const foodVsTarget = foodCals - goal.dailyCalories;
+    const netVsTarget = netCals - goal.dailyCalories;
+
     return {
       logged: dayEntries.length > 0,
       entryCount: dayEntries.length,
       intake: dayNutrition,
+      burnedCalories: burnedCals,
+      netCalories: netCals,
+      foodVsTarget,
+      netVsTarget,
       meals,
       targetCalories: goal.dailyCalories,
       targetProtein: goal.protein,
       targetCarbs: goal.carbohydrates,
       targetFat: goal.fat,
       targetFiber: goal.fiber,
-      remainingCalories: remaining,
-      calorieStatus: dayEntries.length === 0 ? 'not_logged' : (dayNutrition.calories > goal.dailyCalories ? 'over' : 'under'),
+      calorieStatus:
+        dayEntries.length === 0
+          ? 'not_logged'
+          : foodCals > goal.dailyCalories
+            ? 'over'
+            : 'under',
       exercise: {
         sessionCount: workoutSessions,
         durationMinutes: workoutMins,
@@ -250,22 +327,29 @@ export function AnalyticsPage() {
   }, [data.entries, period, range.from, range.to, selectedMonth, selectedYear]);
 
   const chartRows = useMemo<ChartRow[]>(() => {
+    // 1. Authenticated Period Data
     if (isAuthenticated && periodData) {
       if (period === 'yearly' && periodData.months) {
         return periodData.months.map((m) => {
-          const monthDate = parseISO(`${m.from}T12:00:00`);
-          const target = getGoalForDate(data.goals, m.from) ?? fallbackGoal;
+          const dt = parseISO(`${m.from}T12:00:00`);
           return {
-            date: format(monthDate, 'yyyy-MM'),
-            displayLabel: format(monthDate, 'MMM'),
-            fullLabel: format(monthDate, 'MMMM yyyy'),
-            calories: m.averageIntake ? Math.round(m.averageIntake.calories) : 0,
-            protein: m.averageIntake ? Math.round(m.averageIntake.protein) : 0,
-            carbohydrates: m.averageIntake ? Math.round(m.averageIntake.carbohydrates) : 0,
-            fat: m.averageIntake ? Math.round(m.averageIntake.fat) : 0,
-            fiber: m.averageIntake ? Math.round(m.averageIntake.fiber) : 0,
-            targetCalories: target.dailyCalories,
-            logged: m.loggedDays > 0,
+            date: m.from,
+            displayLabel: format(dt, 'MMM'),
+            fullLabel: format(dt, 'MMMM yyyy'),
+            calories: m.averageIntake?.calories ? Math.round(m.averageIntake.calories) : 0,
+            workoutCalories: m.exercise?.estimatedCalories ? Math.round(m.exercise.estimatedCalories) : 0,
+            netCalories:
+              (m.averageIntake?.calories ? Math.round(m.averageIntake.calories) : 0) -
+              (m.exercise?.estimatedCalories ? Math.round(m.exercise.estimatedCalories) : 0),
+            protein: m.averageIntake?.protein ? Math.round(m.averageIntake.protein) : 0,
+            carbohydrates: m.averageIntake?.carbohydrates ? Math.round(m.averageIntake.carbohydrates) : 0,
+            fat: m.averageIntake?.fat ? Math.round(m.averageIntake.fat) : 0,
+            fiber: m.averageIntake?.fiber ? Math.round(m.averageIntake.fiber) : 0,
+            targetCalories: (getGoalForDate(data.goals, m.from) ?? fallbackGoal).dailyCalories,
+            logged: (m.loggedDays ?? 0) > 0,
+            entryCount: Number(m.totalEntries ?? 0),
+            workoutCount: m.exercise?.sessionCount ?? 0,
+            workoutMinutes: m.exercise?.durationMinutes ?? 0,
             loggedDays: m.loggedDays,
             calendarDays: m.calendarDays,
             missingDays: m.missingDays,
@@ -273,34 +357,39 @@ export function AnalyticsPage() {
         });
       }
 
-      if (periodData.days) {
+      if (periodData.days && periodData.days.length > 0) {
         return periodData.days.map((d) => {
-          const target = d.target
-            ? Math.round(d.target.dailyCalories)
-            : (getGoalForDate(data.goals, d.date) ?? fallbackGoal).dailyCalories;
           const dt = parseISO(`${d.date}T12:00:00`);
+          const foodCals = d.intake?.calories ? Math.round(d.intake.calories) : 0;
+          const burnedCals = d.exercise?.estimatedCalories ? Math.round(d.exercise.estimatedCalories) : 0;
+          const netCals = foodCals - burnedCals;
+          const targetCals = d.target?.dailyCalories ?? (getGoalForDate(data.goals, d.date) ?? fallbackGoal).dailyCalories;
+
           return {
             date: d.date,
-            displayLabel: format(dt, period === 'monthly' ? 'd' : 'EEE'),
-            fullLabel: format(dt, 'EEE, MMM d'),
-            calories: d.logged && d.intake ? Math.round(d.intake.calories) : 0,
-            protein: d.logged && d.intake ? Math.round(d.intake.protein) : 0,
-            carbohydrates: d.logged && d.intake ? Math.round(d.intake.carbohydrates) : 0,
-            fat: d.logged && d.intake ? Math.round(d.intake.fat) : 0,
-            fiber: d.logged && d.intake ? Math.round(d.intake.fiber) : 0,
-            targetCalories: target,
+            displayLabel: period === 'weekly' ? format(dt, 'EEE') : format(dt, 'd'),
+            fullLabel: format(dt, 'EEE, MMM d, yyyy'),
+            calories: foodCals,
+            workoutCalories: burnedCals,
+            netCalories: netCals,
+            protein: d.intake?.protein ? Math.round(d.intake.protein) : 0,
+            carbohydrates: d.intake?.carbohydrates ? Math.round(d.intake.carbohydrates) : 0,
+            fat: d.intake?.fat ? Math.round(d.intake.fat) : 0,
+            fiber: d.intake?.fiber ? Math.round(d.intake.fiber) : 0,
+            targetCalories: targetCals,
             logged: d.logged,
             entryCount: d.entryCount,
+            workoutCount: d.exercise?.sessionCount ?? 0,
+            workoutMinutes: d.exercise?.durationMinutes ?? 0,
           };
         });
       }
     }
 
-    // Local mode row generation
+    // 2. Local Guest Mode / Fallback Calculation
     if (period === 'monthly') {
-      const parsedMonth = parseISO(`${selectedMonth}-01T12:00:00`);
-      const monthStart = startOfMonth(parsedMonth);
-      const monthEnd = endOfMonth(parsedMonth);
+      const monthStart = startOfMonth(parseISO(`${selectedMonth}-01T12:00:00`));
+      const monthEnd = endOfMonth(monthStart);
       const daysCount = monthEnd.getDate();
 
       return Array.from({ length: daysCount }, (_, i) => {
@@ -309,11 +398,17 @@ export function AnalyticsPage() {
         const items = actualEntries.filter((e) => e.date === iso);
         const nut = sumNutrition(items);
         const goal = getGoalForDate(data.goals, iso) ?? fallbackGoal;
+        const workouts = data.workouts.filter((w) => w.date === iso);
+        const burnedCals = workouts.reduce((s, w) => s + (w.estimatedCalories ?? 0), 0);
+        const foodCals = items.length ? Math.round(nut.calories) : 0;
+
         return {
           date: iso,
           displayLabel: String(i + 1),
-          fullLabel: format(d, 'EEE, MMM d'),
-          calories: items.length ? Math.round(nut.calories) : 0,
+          fullLabel: format(d, 'EEE, MMM d, yyyy'),
+          calories: foodCals,
+          workoutCalories: burnedCals,
+          netCalories: foodCals - burnedCals,
           protein: items.length ? Math.round(nut.protein) : 0,
           carbohydrates: items.length ? Math.round(nut.carbohydrates) : 0,
           fat: items.length ? Math.round(nut.fat) : 0,
@@ -321,31 +416,42 @@ export function AnalyticsPage() {
           targetCalories: goal.dailyCalories,
           logged: items.length > 0,
           entryCount: items.length,
+          workoutCount: workouts.length,
+          workoutMinutes: workouts.reduce((s, w) => s + w.durationMinutes, 0),
         };
       });
     }
 
     if (period === 'yearly') {
       return Array.from({ length: 12 }, (_, m) => {
-        const monthDate = new Date(selectedYear, m, 1);
-        const monthKey = format(monthDate, 'yyyy-MM');
-        const monthEntries = actualEntries.filter((e) => e.date.startsWith(monthKey));
-        const nut = sumNutrition(monthEntries);
-        const loggedDates = new Set(monthEntries.map((e) => e.date));
+        const mDate = new Date(selectedYear, m, 1);
+        const mPrefix = format(mDate, 'yyyy-MM');
+        const mEntries = actualEntries.filter((e) => e.date.startsWith(mPrefix));
+        const loggedDates = new Set(mEntries.map((e) => e.date));
         const loggedCount = loggedDates.size;
-        const totalDays = endOfMonth(monthDate).getDate();
-        const goal = getGoalForDate(data.goals, `${monthKey}-01`) ?? fallbackGoal;
+        const totalDays = endOfMonth(mDate).getDate();
+        const nut = sumNutrition(mEntries);
+        const goal = getGoalForDate(data.goals, format(mDate, 'yyyy-MM-dd')) ?? fallbackGoal;
+        const avgCals = loggedCount > 0 ? Math.round(nut.calories / loggedCount) : 0;
+        const mWorkouts = data.workouts.filter((w) => w.date.startsWith(mPrefix));
+        const burnedCals = mWorkouts.reduce((s, w) => s + (w.estimatedCalories ?? 0), 0);
+
         return {
-          date: monthKey,
-          displayLabel: format(monthDate, 'MMM'),
-          fullLabel: format(monthDate, 'MMMM yyyy'),
-          calories: loggedCount ? Math.round(nut.calories / loggedCount) : 0,
-          protein: loggedCount ? Math.round(nut.protein / loggedCount) : 0,
-          carbohydrates: loggedCount ? Math.round(nut.carbohydrates / loggedCount) : 0,
-          fat: loggedCount ? Math.round(nut.fat) / loggedCount : 0,
-          fiber: loggedCount ? Math.round(nut.fiber / loggedCount) : 0,
+          date: mPrefix,
+          displayLabel: format(mDate, 'MMM'),
+          fullLabel: format(mDate, 'MMMM yyyy'),
+          calories: avgCals,
+          workoutCalories: burnedCals,
+          netCalories: avgCals - (loggedCount > 0 ? Math.round(burnedCals / loggedCount) : 0),
+          protein: loggedCount > 0 ? Math.round(nut.protein / loggedCount) : 0,
+          carbohydrates: loggedCount > 0 ? Math.round(nut.carbohydrates / loggedCount) : 0,
+          fat: loggedCount > 0 ? Math.round(nut.fat / loggedCount) : 0,
+          fiber: loggedCount > 0 ? Math.round(nut.fiber / loggedCount) : 0,
           targetCalories: goal.dailyCalories,
           logged: loggedCount > 0,
+          entryCount: mEntries.length,
+          workoutCount: mWorkouts.length,
+          workoutMinutes: mWorkouts.reduce((s, w) => s + w.durationMinutes, 0),
           loggedDays: loggedCount,
           calendarDays: totalDays,
           missingDays: totalDays - loggedCount,
@@ -363,11 +469,17 @@ export function AnalyticsPage() {
       const items = actualEntries.filter((e) => e.date === iso);
       const nut = sumNutrition(items);
       const goal = getGoalForDate(data.goals, iso) ?? fallbackGoal;
+      const workouts = data.workouts.filter((w) => w.date === iso);
+      const burnedCals = workouts.reduce((s, w) => s + (w.estimatedCalories ?? 0), 0);
+      const foodCals = items.length ? Math.round(nut.calories) : 0;
+
       return {
         date: iso,
         displayLabel: format(d, 'EEE'),
-        fullLabel: format(d, 'EEE, MMM d'),
-        calories: items.length ? Math.round(nut.calories) : 0,
+        fullLabel: format(d, 'EEE, MMM d, yyyy'),
+        calories: foodCals,
+        workoutCalories: burnedCals,
+        netCalories: foodCals - burnedCals,
         protein: items.length ? Math.round(nut.protein) : 0,
         carbohydrates: items.length ? Math.round(nut.carbohydrates) : 0,
         fat: items.length ? Math.round(nut.fat) : 0,
@@ -375,57 +487,59 @@ export function AnalyticsPage() {
         targetCalories: goal.dailyCalories,
         logged: items.length > 0,
         entryCount: items.length,
+        workoutCount: workouts.length,
+        workoutMinutes: workouts.reduce((s, w) => s + w.durationMinutes, 0),
       };
     });
-  }, [actualEntries, data.goals, isAuthenticated, period, periodData, range.from, range.to, selectedMonth, selectedYear]);
+  }, [actualEntries, data.goals, data.workouts, isAuthenticated, period, periodData, range.from, range.to, selectedMonth, selectedYear]);
 
-  // Stat metrics for period view
-  let average = 0;
-  let above = 0;
-  let below = 0;
-  let logDays = 0;
-  let rangeDays = 0;
-  let consistency = 0;
-  let totalEntriesCount = 0;
-
-  if (isAuthenticated && periodData) {
-    average = periodData.averageIntake?.calories ? Math.round(periodData.averageIntake.calories) : 0;
-    above = periodData.daysOverTarget;
-    below = periodData.daysUnderTarget;
-    logDays = periodData.loggedDays;
-    rangeDays = periodData.calendarDays;
-    consistency = rangeDays > 0 ? Math.round((logDays / rangeDays) * 100) : 0;
-    totalEntriesCount = periodData.totalEntries ?? (periodData.days ? periodData.days.reduce((s, d) => s + d.entryCount, 0) : 0);
-  } else {
-    logDays = new Set(actualEntries.map((e) => e.date)).size;
-    const totals = actualEntries.length ? sumNutrition(actualEntries) : { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: 0 };
-    average = logDays ? Math.round(totals.calories / logDays) : 0;
-    const dayComparisons = Array.from(new Set(actualEntries.map((e) => e.date))).map((d) => {
-      const items = actualEntries.filter((e) => e.date === d);
-      return {
-        calories: sumNutrition(items).calories,
-        target: (getGoalForDate(data.goals, d) ?? fallbackGoal).dailyCalories,
-      };
-    });
-    above = dayComparisons.filter((d) => d.calories > d.target).length;
-    below = dayComparisons.filter((d) => d.calories <= d.target).length;
-    rangeDays = chartRows.length;
-    consistency = rangeDays && logDays ? Math.round((logDays / rangeDays) * 100) : 0;
-    totalEntriesCount = actualEntries.length;
-  }
-
-  // Monthly breakdown metrics (Priority 2)
-  const isCurrentMonth = period === 'monthly' && selectedMonth === format(new Date(), 'yyyy-MM');
-  const monthCalendarDays = period === 'monthly' ? endOfMonth(parseISO(`${selectedMonth}-01T12:00:00`)).getDate() : rangeDays;
-  const daysElapsedInMonth = isCurrentMonth ? new Date().getDate() : monthCalendarDays;
+  // -------------------------------------------------------------
+  // PERIOD AGGREGATES & METRICS
+  // -------------------------------------------------------------
   const periodTotalCalories = chartRows.reduce((sum, r) => sum + r.calories, 0);
+  const periodTotalBurned = chartRows.reduce((sum, r) => sum + r.workoutCalories, 0);
+  const periodTotalNet = periodTotalCalories - periodTotalBurned;
   const periodTotalProtein = chartRows.reduce((sum, r) => sum + r.protein, 0);
   const periodTotalCarbs = chartRows.reduce((sum, r) => sum + r.carbohydrates, 0);
   const periodTotalFat = chartRows.reduce((sum, r) => sum + r.fat, 0);
   const periodTotalFiber = chartRows.reduce((sum, r) => sum + r.fiber, 0);
+
+  const loggedRows = chartRows.filter((r) => r.logged);
+  const loggedDays = loggedRows.length;
+  const rangeDays = chartRows.length;
+
+  const averageDailyIntake = loggedDays > 0 ? Math.round(periodTotalCalories / loggedDays) : 0;
+  const averageDailyNet = loggedDays > 0 ? Math.round(periodTotalNet / loggedDays) : 0;
+  const avgDailyProtein = loggedDays > 0 ? Math.round(periodTotalProtein / loggedDays) : 0;
+  const avgDailyCarbs = loggedDays > 0 ? Math.round(periodTotalCarbs / loggedDays) : 0;
+  const avgDailyFat = loggedDays > 0 ? Math.round(periodTotalFat / loggedDays) : 0;
+  const avgDailyFiber = loggedDays > 0 ? Math.round(periodTotalFiber / loggedDays) : 0;
+
+  // Monthly breakdown metrics
+  const isCurrentMonth = period === 'monthly' && selectedMonth === format(new Date(), 'yyyy-MM');
+  const monthCalendarDays = period === 'monthly' ? endOfMonth(parseISO(`${selectedMonth}-01T12:00:00`)).getDate() : rangeDays;
+  const daysElapsedInMonth = isCurrentMonth ? new Date().getDate() : monthCalendarDays;
   const avgAcrossAllCalendarDays = daysElapsedInMonth > 0 ? Math.round(periodTotalCalories / daysElapsedInMonth) : 0;
 
-  // Weight rows for chart
+  // Highest and lowest intake days
+  const loggedOnlyIntake = loggedRows.filter((r) => r.calories > 0);
+  const highestIntakeDay = loggedOnlyIntake.length
+    ? loggedOnlyIntake.reduce((max, r) => (r.calories > max.calories ? r : max), loggedOnlyIntake[0])
+    : null;
+  const lowestIntakeDay = loggedOnlyIntake.length
+    ? loggedOnlyIntake.reduce((min, r) => (r.calories < min.calories ? r : min), loggedOnlyIntake[0])
+    : null;
+
+  // Target adherence
+  const daysOnOrUnder = loggedRows.filter((r) => r.calories <= r.targetCalories).length;
+  const daysAboveTarget = loggedRows.filter((r) => r.calories > r.targetCalories).length;
+  const targetAdherencePct = loggedDays > 0 ? Math.round((daysOnOrUnder / loggedDays) * 100) : 0;
+
+  // Workouts in period
+  const totalWorkoutsCount = chartRows.reduce((sum, r) => sum + (r.workoutCount ?? 0), 0);
+  const totalWorkoutMinutes = chartRows.reduce((sum, r) => sum + (r.workoutMinutes ?? 0), 0);
+
+  // Weight rows for chart (unconditional hook)
   const weightRows = useMemo(() => {
     if (isAuthenticated && periodData?.weight?.points && periodData.weight.points.length > 0) {
       return periodData.weight.points.map((pt) => ({
@@ -446,37 +560,72 @@ export function AnalyticsPage() {
     return [];
   }, [data.weights, isAuthenticated, period, periodData, range.from, range.to, selectedMonth, selectedYear]);
 
-  const hasTrend = chartRows.some((row) => row.calories > 0);
+  // Exercise totals for period (unconditional hook)
+  const exerciseTotals = useMemo(() => {
+    if (isAuthenticated && periodData?.exercise) {
+      return periodData.exercise;
+    }
+    const relevantWorkouts = data.workouts.filter((w) => {
+      if (period === 'weekly') return w.date >= range.from && w.date <= range.to;
+      if (period === 'monthly') return w.date.startsWith(selectedMonth);
+      return w.date.startsWith(`${selectedYear}-`);
+    });
+    return {
+      sessionCount: relevantWorkouts.length,
+      durationMinutes: relevantWorkouts.reduce((s, w) => s + w.durationMinutes, 0),
+      estimatedCalories: relevantWorkouts.reduce((s, w) => s + (w.estimatedCalories ?? 0), 0) || null,
+    };
+  }, [data.workouts, isAuthenticated, period, periodData, range.from, range.to, selectedMonth, selectedYear]);
 
-  // Exercise totals for period
-  const exerciseTotals = isAuthenticated && periodData
-    ? periodData.exercise
-    : useMemo(() => {
-      const relevantWorkouts = data.workouts.filter((w) => {
-        if (period === 'weekly') return w.date >= range.from && w.date <= range.to;
-        if (period === 'monthly') return w.date.startsWith(selectedMonth);
-        return w.date.startsWith(`${selectedYear}-`);
+  // Weekly breakdown chunks within a month (Weeks 1 to 5)
+  const monthlyWeeksBreakdown = useMemo(() => {
+    if (period !== 'monthly' || chartRows.length === 0) return [];
+    const chunks: { label: string; days: ChartRow[]; food: number; burned: number; net: number; workouts: number }[] = [];
+    const chunkSize = 7;
+    for (let i = 0; i < chartRows.length; i += chunkSize) {
+      const slice = chartRows.slice(i, i + chunkSize);
+      const weekNum = Math.floor(i / chunkSize) + 1;
+      const startDay = i + 1;
+      const endDay = Math.min(i + chunkSize, chartRows.length);
+      const food = slice.reduce((s, r) => s + r.calories, 0);
+      const burned = slice.reduce((s, r) => s + r.workoutCalories, 0);
+      chunks.push({
+        label: `Week ${weekNum} (Days ${startDay}–${endDay})`,
+        days: slice,
+        food,
+        burned,
+        net: food - burned,
+        workouts: slice.reduce((s, r) => s + r.workoutCount, 0),
       });
-      return {
-        sessionCount: relevantWorkouts.length,
-        durationMinutes: relevantWorkouts.reduce((s, w) => s + w.durationMinutes, 0),
-        estimatedCalories: relevantWorkouts.reduce((s, w) => s + (w.estimatedCalories ?? 0), 0) || null,
-      };
-    }, [data.workouts, period, range.from, range.to, selectedMonth, selectedYear]);
+    }
+    return chunks;
+  }, [chartRows, period]);
+
+  const hasTrend = chartRows.some((row) => row.calories > 0 || row.workoutCalories > 0);
+
+  // Pagination calculations for Daily Audit Table
+  const totalAuditRows = chartRows.length;
+  const totalAuditPages = Math.max(1, Math.ceil(totalAuditRows / auditPageSize));
+  const currentAuditPage = Math.min(Math.max(1, auditPage), totalAuditPages);
+  const auditStartIndex = (currentAuditPage - 1) * auditPageSize;
+  const auditEndIndex = Math.min(auditStartIndex + auditPageSize, totalAuditRows);
+  const paginatedAuditRows = useMemo(() => {
+    return chartRows.slice(auditStartIndex, auditEndIndex);
+  }, [chartRows, auditStartIndex, auditEndIndex]);
 
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="PATTERNS OVER PERFECTION"
-        title="Health & nutrition analytics"
-        subtitle="Unbiased tracking of your daily meals, targets, activity, and long-term progress."
+        eyebrow="METABOLIC & NUTRITION INTELLIGENCE"
+        title="Analytics & balance"
+        subtitle="Track your food intake, workout expenditure, net calorie balance, and long-term health trends."
         action={
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {isLoading && <Loader2 size={14} className="animate-spin text-muted" />}
             {isAuthenticated ? (
               <StatusPill tone="success">Synced with backend</StatusPill>
             ) : (
-              <StatusPill tone="neutral">Local data</StatusPill>
+              <StatusPill tone="neutral">Local guest data</StatusPill>
             )}
           </div>
         }
@@ -485,19 +634,19 @@ export function AnalyticsPage() {
       {/* Period Selection & Context Navigation Bar */}
       <Card className="analytics-filters">
         <div className="period-tabs" role="tablist" aria-label="Analytics time period">
-          {periods.map((item) => (
+          {periods.map(({ key, label }) => (
             <button
               type="button"
               role="tab"
-              aria-selected={period === item}
-              className={period === item ? 'active' : ''}
-              key={item}
+              aria-selected={period === key}
+              className={period === key ? 'active' : ''}
+              key={key}
               onClick={() => {
-                setPeriod(item);
+                setPeriod(key);
                 setLoadError(null);
               }}
             >
-              {item[0]?.toUpperCase()}{item.slice(1)}
+              {label}
             </button>
           ))}
         </div>
@@ -512,6 +661,7 @@ export function AnalyticsPage() {
                   className="nav-arrow-btn"
                   onClick={() => shiftDay(-1)}
                   aria-label="Previous day"
+                  title="Previous day"
                 >
                   <ChevronLeft size={16} />
                 </button>
@@ -527,6 +677,7 @@ export function AnalyticsPage() {
                   className="nav-arrow-btn"
                   onClick={() => shiftDay(1)}
                   aria-label="Next day"
+                  title="Next day"
                 >
                   <ChevronRight size={16} />
                 </button>
@@ -545,39 +696,42 @@ export function AnalyticsPage() {
           )}
 
           {period === 'weekly' && (
-            <div className="range-controls">
-              <CalendarRange size={16} />
-              <label>
-                <span>From</span>
-                <input
-                  type="date"
-                  value={range.from}
-                  onChange={(e) => setRange((cur) => ({ ...cur, from: e.target.value }))}
-                  aria-label="Start date"
-                />
-              </label>
-              <span className="range-separator">to</span>
-              <label>
-                <span>To</span>
-                <input
-                  type="date"
-                  value={range.to}
-                  onChange={(e) => setRange((cur) => ({ ...cur, to: e.target.value }))}
-                  aria-label="End date"
-                />
-              </label>
-              <button
-                type="button"
-                className="today-badge-btn"
-                onClick={() =>
-                  setRange({
-                    from: format(subDays(new Date(), 6), 'yyyy-MM-dd'),
-                    to: todayISO(),
-                  })
-                }
-              >
-                Past 7 days
-              </button>
+            <div className="analytics-nav-group">
+              <div className="nav-controls-row">
+                <button
+                  type="button"
+                  className="nav-arrow-btn"
+                  onClick={() => shiftWeek(-1)}
+                  aria-label="Previous week"
+                  title="Previous week"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="today-badge-btn"
+                  onClick={setThisWeek}
+                  title="Return to current week"
+                >
+                  This week
+                </button>
+                <button
+                  type="button"
+                  className="nav-arrow-btn"
+                  onClick={() => shiftWeek(1)}
+                  aria-label="Next week"
+                  title="Next week"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+              <span className="period-indicator" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <CalendarRange size={14} style={{ color: '#244c3a' }} />
+                <span>
+                  {format(parseISO(`${range.from}T12:00:00`), 'EEE, MMM d')} –{' '}
+                  {format(parseISO(`${range.to}T12:00:00`), 'EEE, MMM d, yyyy')}
+                </span>
+              </span>
             </div>
           )}
 
@@ -589,6 +743,7 @@ export function AnalyticsPage() {
                   className="nav-arrow-btn"
                   onClick={() => shiftMonth(-1)}
                   aria-label="Previous month"
+                  title="Previous month"
                 >
                   <ChevronLeft size={16} />
                 </button>
@@ -604,6 +759,7 @@ export function AnalyticsPage() {
                   className="nav-arrow-btn"
                   onClick={() => shiftMonth(1)}
                   aria-label="Next month"
+                  title="Next month"
                 >
                   <ChevronRight size={16} />
                 </button>
@@ -618,7 +774,7 @@ export function AnalyticsPage() {
               <span className="period-indicator">
                 {format(parseISO(`${selectedMonth}-01T12:00:00`), 'MMMM yyyy')}{' '}
                 <small style={{ fontWeight: 600, color: isCurrentMonth ? '#b45309' : '#15803d' }}>
-                  ({isCurrentMonth ? `Month-to-date: ${daysElapsedInMonth} of ${monthCalendarDays} days` : `Completed month: ${monthCalendarDays} days`})
+                  ({isCurrentMonth ? `Month-to-date: ${daysElapsedInMonth} of ${monthCalendarDays} days` : `Full month: ${monthCalendarDays} days`})
                 </small>
               </span>
             </div>
@@ -632,6 +788,7 @@ export function AnalyticsPage() {
                   className="nav-arrow-btn"
                   onClick={() => shiftYear(-1)}
                   aria-label="Previous year"
+                  title="Previous year"
                 >
                   <ChevronLeft size={16} />
                 </button>
@@ -652,6 +809,7 @@ export function AnalyticsPage() {
                   className="nav-arrow-btn"
                   onClick={() => shiftYear(1)}
                   aria-label="Next year"
+                  title="Next year"
                 >
                   <ChevronRight size={16} />
                 </button>
@@ -674,7 +832,7 @@ export function AnalyticsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', background: '#fff3f1', border: '1px solid #f8d7da', borderRadius: '12px', color: '#b54842' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertCircle size={16} />
-            <span style={{ fontSize: '11px', fontWeight: 500 }}>{loadError}</span>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{loadError}</span>
           </div>
           <Button size="sm" tone="secondary" onClick={() => void fetchAnalytics()}>
             <RotateCcw size={13} /> Retry
@@ -687,45 +845,103 @@ export function AnalyticsPage() {
       {/* ============================================================= */}
       {period === 'daily' && (
         <div style={{ display: 'grid', gap: '16px' }}>
-          {/* Calorie Check-In & Remaining Allowance */}
+          {/* Daily 4-Metric Hero Cards */}
+          <div className="analytics-stat-grid">
+            <StatCard
+              icon={<Utensils size={18} />}
+              label="Food intake"
+              value={`${formatNumber(daySummary.intake.calories)} kcal`}
+              detail={`${daySummary.entryCount} ${daySummary.entryCount === 1 ? 'meal logged' : 'meals logged'}`}
+              tone="green"
+            />
+            <StatCard
+              icon={<Flame size={18} />}
+              label="Workouts burned"
+              value={`${formatNumber(daySummary.burnedCalories)} kcal`}
+              detail={`${daySummary.exercise?.sessionCount ?? 0} ${daySummary.exercise?.sessionCount === 1 ? 'workout' : 'workouts'} (${daySummary.exercise?.durationMinutes ?? 0} min)`}
+              tone="coral"
+            />
+            <StatCard
+              icon={<Zap size={18} />}
+              label="Net calorie intake"
+              value={`${formatNumber(daySummary.netCalories)} kcal`}
+              detail="Food intake − Workout burned"
+              tone="sage"
+            />
+            <StatCard
+              icon={<Target size={18} />}
+              label="Daily food target"
+              value={`${formatNumber(daySummary.targetCalories)} kcal`}
+              detail={`Effective goal on ${format(parseISO(`${selectedDay}T12:00:00`), 'MMM d')}`}
+              tone="gold"
+            />
+          </div>
+
+          {/* Calorie Check-In & Dual Target Comparisons */}
           <div className="dashboard-hero-grid">
             <Card className="calorie-card">
               <div className="card-heading">
                 <div>
-                  <p className="eyebrow">DAILY CALORIE BALANCE</p>
-                  <h2>Intake & allowance</h2>
+                  <p className="eyebrow">CLEAR TARGET ACCOUNTING</p>
+                  <h2>Food vs Net comparisons</h2>
                 </div>
                 <span className="soft-icon green-soft">
                   <Flame size={18} />
                 </span>
               </div>
-              <div className="calorie-main">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span className="summary-label">TOTAL CONFIRMED INTAKE</span>
-                  <strong style={{ fontSize: '32px', fontFamily: 'Manrope', color: '#244c3a' }}>
-                    {formatNumber(daySummary.intake.calories)}{' '}
-                    <small style={{ fontSize: '14px', color: '#657363' }}>kcal</small>
-                  </strong>
-                  <span style={{ fontSize: '11px', color: '#818b80', marginTop: '4px' }}>
-                    {daySummary.entryCount} {daySummary.entryCount === 1 ? 'confirmed entry' : 'confirmed entries'}
-                  </span>
-                </div>
-                <div className="calorie-summary">
-                  <span className="summary-label">DAILY TARGET</span>
-                  <strong>{formatNumber(daySummary.targetCalories)} <small>kcal</small></strong>
-                  <div className={`remaining-badge ${daySummary.remainingCalories < 0 ? 'over' : ''}`}>
-                    {daySummary.remainingCalories >= 0 ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}
-                    <span>
-                      {formatNumber(Math.abs(daySummary.remainingCalories))} kcal{' '}
-                      {daySummary.remainingCalories >= 0 ? 'remaining' : 'over target'}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', marginTop: '8px' }}>
+                {/* 1. Food Intake vs Target */}
+                <div style={{ padding: '14px', background: '#f8faf7', borderRadius: '12px', border: '1px solid #e5ede3' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.04em', color: '#657363' }}>
+                      FOOD INTAKE VS TARGET
+                    </span>
+                    <span className={`remaining-badge ${daySummary.foodVsTarget > 0 ? 'over' : ''}`} style={{ margin: 0 }}>
+                      {daySummary.foodVsTarget > 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                      <span>{Math.abs(daySummary.foodVsTarget)} kcal {daySummary.foodVsTarget > 0 ? 'above' : 'below'}</span>
                     </span>
                   </div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#244c3a', fontFamily: 'Manrope' }}>
+                    {formatNumber(daySummary.intake.calories)}{' '}
+                    <small style={{ fontSize: '0.8125rem', fontWeight: 500, color: '#738073' }}>
+                      / {formatNumber(daySummary.targetCalories)} kcal target
+                    </small>
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: '#657363', marginTop: '6px', lineHeight: 1.4 }}>
+                    {daySummary.foodVsTarget > 0
+                      ? `Food intake is ${formatNumber(daySummary.foodVsTarget)} kcal above your configured target.`
+                      : `Food intake is ${formatNumber(Math.abs(daySummary.foodVsTarget))} kcal within your food allowance.`}
+                  </p>
+                </div>
+
+                {/* 2. Net Intake vs Target */}
+                <div style={{ padding: '14px', background: '#f8faf7', borderRadius: '12px', border: '1px solid #e5ede3' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.04em', color: '#657363' }}>
+                      NET INTAKE VS TARGET
+                    </span>
+                    <span className={`remaining-badge ${daySummary.netVsTarget > 0 ? 'over' : ''}`} style={{ margin: 0 }}>
+                      {daySummary.netVsTarget > 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                      <span>{Math.abs(daySummary.netVsTarget)} kcal {daySummary.netVsTarget > 0 ? 'above' : 'below'}</span>
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#244c3a', fontFamily: 'Manrope' }}>
+                    {formatNumber(daySummary.netCalories)}{' '}
+                    <small style={{ fontSize: '0.8125rem', fontWeight: 500, color: '#738073' }}>
+                      / {formatNumber(daySummary.targetCalories)} kcal target
+                    </small>
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: '#657363', marginTop: '6px', lineHeight: 1.4 }}>
+                    {daySummary.burnedCalories > 0
+                      ? `After accounting for ${formatNumber(daySummary.burnedCalories)} kcal of exercise, net intake is ${formatNumber(Math.abs(daySummary.netVsTarget))} kcal ${daySummary.netVsTarget > 0 ? 'above' : 'below'} target.`
+                      : 'No workouts recorded yet today. Net calories currently equal food intake.'}
+                  </p>
                 </div>
               </div>
-              <div className="formula-callout">
-                <strong>Accounting Rule:</strong> Remaining allowance is calculated strictly as{' '}
-                <em>Daily target ({formatNumber(daySummary.targetCalories)} kcal) − Confirmed food intake ({formatNumber(daySummary.intake.calories)} kcal)</em>.{' '}
-                Exercise expenditure is tracked separately and is never added to your food allowance.
+
+              <div className="formula-callout" style={{ marginTop: '14px' }}>
+                <strong>Accounting Rule:</strong> Food intake ({formatNumber(daySummary.intake.calories)} kcal) − Workout burned ({formatNumber(daySummary.burnedCalories)} kcal) = Net intake ({formatNumber(daySummary.netCalories)} kcal). Both metrics are preserved distinctly so you never lose visibility into raw meal consumption.
               </div>
             </Card>
 
@@ -849,7 +1065,7 @@ export function AnalyticsPage() {
                 </strong>
                 <span>
                   {daySummary.exercise?.sessionCount
-                    ? 'Exercise calories are estimated and kept separate from food intake.'
+                    ? 'Exercise calories are recorded distinctly; they do not overwrite food records.'
                     : 'Log movement in Workouts to record completed sets and cardio.'}
                 </span>
               </div>
@@ -861,7 +1077,7 @@ export function AnalyticsPage() {
                 {daySummary.exercise?.estimatedCalories != null && (
                   <span>
                     <Flame size={14} /> <strong>~{formatNumber(daySummary.exercise.estimatedCalories)}</strong>
-                    <small>kcal est.</small>
+                    <small>kcal burned</small>
                   </span>
                 )}
               </div>
@@ -880,7 +1096,7 @@ export function AnalyticsPage() {
                 </strong>
                 <span>
                   {daySummary.weightKg != null
-                    ? 'Logged on this date. Weight is never inferred from calories or exercise.'
+                    ? 'Logged on this date. Weight is user-entered and never inferred.'
                     : 'Add a dated weigh-in in Weight & Goals whenever you are ready.'}
                 </span>
               </div>
@@ -890,11 +1106,11 @@ export function AnalyticsPage() {
       )}
 
       {/* ============================================================= */}
-      {/* 2. WEEKLY, MONTHLY & YEARLY PERIOD VIEWS                      */}
+      {/* 2. WEEKLY & MONTHLY & YEARLY VIEWS                            */}
       {/* ============================================================= */}
       {period !== 'daily' && (
         <>
-          {/* Activity Totals Banner */}
+          {/* Exercise Activity Banner */}
           {exerciseTotals && (exerciseTotals.sessionCount > 0 || exerciseTotals.durationMinutes > 0) && (
             <Card className="activity-summary-card">
               <div className="activity-summary-icon">
@@ -902,9 +1118,9 @@ export function AnalyticsPage() {
               </div>
               <div className="activity-summary-copy">
                 <strong>
-                  Workouts in period ({exerciseTotals.sessionCount} {exerciseTotals.sessionCount === 1 ? 'session' : 'sessions'})
+                  Workouts in this {period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'period'} ({exerciseTotals.sessionCount} {exerciseTotals.sessionCount === 1 ? 'session' : 'sessions'})
                 </strong>
-                <span>Exercise is reported separately from calorie intake; energy burned is an estimate.</span>
+                <span>Exercise calories burned (~{formatNumber(exerciseTotals.estimatedCalories ?? 0)} kcal) are recorded separately from food intake.</span>
               </div>
               <div className="activity-summary-stats">
                 <span>
@@ -917,134 +1133,141 @@ export function AnalyticsPage() {
                 {exerciseTotals.estimatedCalories != null && (
                   <span>
                     <strong>~{formatNumber(exerciseTotals.estimatedCalories)}</strong>{' '}
-                    <small>kcal burned (est.)</small>
+                    <small>kcal burned</small>
                   </span>
                 )}
               </div>
             </Card>
           )}
 
-          {/* Stat Grid */}
+          {/* Summary Stat Grid */}
           <div className="analytics-stat-grid">
             <StatCard
-              icon={<ChartNoAxesColumnIncreasing size={18} />}
-              label={period === 'monthly' ? 'Total monthly intake' : period === 'yearly' ? 'Monthly avg intake' : 'Average daily intake'}
-              value={
-                period === 'monthly'
-                  ? `${formatNumber(periodTotalCalories)} kcal`
-                  : average ? `${formatNumber(average)} kcal` : '—'
-              }
+              icon={<Utensils size={18} />}
+              label={period === 'weekly' ? 'Weekly food intake' : period === 'monthly' ? 'Monthly food intake' : 'Annual food intake'}
+              value={`${formatNumber(periodTotalCalories)} kcal`}
               detail={
                 period === 'monthly'
-                  ? `${totalEntriesCount} logged meals · ${logDays} active days`
-                  : logDays
-                    ? `across ${logDays} logged ${logDays === 1 ? 'day' : 'days'} (unlogged days excluded)`
-                    : 'No logged days in this range'
+                  ? `Avg ${formatNumber(averageDailyIntake)} kcal/logged day · ${formatNumber(avgAcrossAllCalendarDays)} kcal/calendar day`
+                  : loggedDays > 0
+                    ? `Avg ${formatNumber(averageDailyIntake)} kcal/day across ${loggedDays} logged ${loggedDays === 1 ? 'day' : 'days'}`
+                    : 'No meal records in range'
               }
               tone="green"
             />
             <StatCard
-              icon={<Target size={18} />}
-              label={period === 'monthly' ? 'Avg per logged day' : 'Target adherence'}
-              value={
-                period === 'monthly'
-                  ? `${formatNumber(average)} kcal`
-                  : logDays > 0 ? `${Math.round((below / logDays) * 100)}%` : '—'
-              }
-              detail={
-                period === 'monthly'
-                  ? `÷ ${logDays} logged ${logDays === 1 ? 'day' : 'days'} (excludes zero/unlogged days)`
-                  : logDays > 0
-                    ? `${below} on/under target · ${above} above target`
-                    : 'No data to evaluate targets'
-              }
+              icon={<Flame size={18} />}
+              label={period === 'weekly' ? 'Weekly workout burned' : period === 'monthly' ? 'Monthly workout burned' : 'Annual workout burned'}
+              value={`${formatNumber(periodTotalBurned)} kcal`}
+              detail={`${totalWorkoutsCount} ${totalWorkoutsCount === 1 ? 'workout' : 'workouts'} (${formatNumber(totalWorkoutMinutes)} mins total)`}
               tone="coral"
             />
             <StatCard
-              icon={<Leaf size={18} />}
-              label={period === 'monthly' ? 'Avg per calendar day' : 'Logging consistency'}
-              value={
-                period === 'monthly'
-                  ? `${formatNumber(avgAcrossAllCalendarDays)} kcal`
-                  : consistency ? `${consistency}%` : '—'
-              }
+              icon={<Zap size={18} />}
+              label="Net calorie intake"
+              value={`${formatNumber(periodTotalNet)} kcal`}
               detail={
-                period === 'monthly'
-                  ? `÷ ${daysElapsedInMonth} calendar days (${isCurrentMonth ? 'month-to-date' : 'completed month'})`
-                  : rangeDays
-                    ? `${logDays} of ${rangeDays} days logged`
-                    : 'Choose a valid period'
+                loggedDays > 0
+                  ? `Avg net ${formatNumber(averageDailyNet)} kcal/day (${formatNumber(periodTotalCalories)} food − ${formatNumber(periodTotalBurned)} burned)`
+                  : 'Food intake − Workout burned'
               }
               tone="sage"
             />
             <StatCard
-              icon={<Scale size={18} />}
-              label="Weight trend"
-              value={
-                periodData?.weight?.endKg != null
-                  ? `${Number(periodData.weight.endKg).toFixed(1)} kg`
-                  : weightRows.length
-                    ? `${weightRows[weightRows.length - 1]?.weight.toFixed(1)} kg`
-                    : '—'
-              }
+              icon={<Target size={18} />}
+              label="Target adherence"
+              value={loggedDays > 0 ? `${targetAdherencePct}%` : '—'}
               detail={
-                periodData?.weight?.changeKg != null
-                  ? `${periodData.weight.changeKg > 0 ? '+' : ''}${Number(periodData.weight.changeKg).toFixed(1)} kg net change (${periodData.weight.points?.length ?? 0} weigh-ins)`
-                  : weightRows.length
-                    ? `${weightRows.length} ${weightRows.length === 1 ? 'weigh-in' : 'weigh-ins'} in period`
-                    : 'No weigh-ins in this period'
+                loggedDays > 0
+                  ? `${daysOnOrUnder} on/under target · ${daysAboveTarget} above target`
+                  : 'No logged days to evaluate'
               }
               tone="gold"
             />
           </div>
 
-          {/* Monthly Nutrient Totals Banner (Priority 2) */}
-          {period === 'monthly' && (
+          {/* Highlights Banner: Highs & Lows & Averages */}
+          {loggedDays > 0 && (
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '8px',
-                padding: '10px 14px',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                gap: '12px',
+                padding: '14px 16px',
                 background: '#ffffff',
                 border: '1px solid #e7ece4',
-                borderRadius: '12px',
-                fontSize: '11px',
-                color: '#374151',
+                borderRadius: '14px',
               }}
             >
-              <span style={{ fontWeight: 600, color: '#1f2937' }}>
-                Accumulated Nutrients ({isCurrentMonth ? `Month-to-date: ${daysElapsedInMonth} days` : 'Full month'}):
-              </span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                <span>Protein: <b>{formatNumber(periodTotalProtein)}g</b></span>
-                <span>Carbs: <b>{formatNumber(periodTotalCarbs)}g</b></span>
-                <span>Fat: <b>{formatNumber(periodTotalFat)}g</b></span>
-                <span>Fiber: <b>{formatNumber(periodTotalFiber)}g</b></span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ padding: '6px', borderRadius: '8px', background: '#f0fdf4', color: '#15803d' }}>
+                  <Leaf size={16} />
+                </span>
+                <div>
+                  <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#657363', textTransform: 'uppercase' }}>
+                    Average Daily Macros
+                  </span>
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#244c3a', marginTop: '2px' }}>
+                    {avgDailyProtein}g P · {avgDailyCarbs}g C · {avgDailyFat}g F · {avgDailyFiber}g Fi
+                  </div>
+                </div>
               </div>
+
+              {highestIntakeDay && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ padding: '6px', borderRadius: '8px', background: '#fff1f2', color: '#e11d48' }}>
+                    <ArrowUpRight size={16} />
+                  </span>
+                  <div>
+                    <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#657363', textTransform: 'uppercase' }}>
+                      Highest Intake Day
+                    </span>
+                    <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#244c3a', marginTop: '2px' }}>
+                      {highestIntakeDay.fullLabel}: {formatNumber(highestIntakeDay.calories)} kcal
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {lowestIntakeDay && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ padding: '6px', borderRadius: '8px', background: '#ecfdf5', color: '#059669' }}>
+                    <ArrowDownRight size={16} />
+                  </span>
+                  <div>
+                    <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#657363', textTransform: 'uppercase' }}>
+                      Lowest Intake Day
+                    </span>
+                    <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#244c3a', marginTop: '2px' }}>
+                      {lowestIntakeDay.fullLabel}: {formatNumber(lowestIntakeDay.calories)} kcal
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Calorie & Target Chart */}
+          {/* Interactive Multi-Metric Calorie Comparison Chart */}
           <Card className="analytics-chart-card">
             <div className="card-heading">
               <div>
-                <p className="eyebrow">CALORIES &amp; TARGET</p>
-                <h2>Intake by {period === 'yearly' ? 'month' : 'day'}</h2>
+                <p className="eyebrow">
+                  {period === 'weekly' ? '7-DAY COMPARISON' : period === 'monthly' ? 'MONTHLY CALORIE DYNAMICS' : 'ANNUAL TRENDS'}
+                </p>
+                <h2>Food intake, burned &amp; net calories</h2>
                 <p className="card-subtitle">
-                  {period === 'yearly'
-                    ? 'Averaged over recorded days only. Months with missing data are clearly distinguished.'
-                    : 'The target line follows the goal that was effective on each date.'}
+                  Compare total calories consumed from meals, workout energy burned, and resulting net intake against daily targets.
                 </p>
               </div>
               <span className="chart-legend">
-                <i className="legend-dot" /> Intake <i className="legend-line" /> Target
+                <i className="legend-dot" style={{ background: '#244c3a' }} /> Food{' '}
+                <i className="legend-dot" style={{ background: '#f08a70' }} /> Burned{' '}
+                <i className="legend-dot" style={{ background: '#059669' }} /> Net{' '}
+                <i className="legend-line" style={{ borderTop: '2px dashed #b91c1c' }} /> Target
               </span>
             </div>
             {hasTrend ? (
-              <div className="chart-wrap chart-tall" role="img" aria-label="Calorie intake chart">
+              <div className="chart-wrap chart-tall" role="img" aria-label="Calorie dynamics chart">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartRows} margin={{ top: 16, right: 6, bottom: 4, left: -12 }}>
                     <CartesianGrid stroke="#edf0e9" vertical={false} />
@@ -1057,37 +1280,39 @@ export function AnalyticsPage() {
                     <YAxis tickLine={false} axisLine={false} tick={{ fill: '#8b918a', fontSize: 11 }} width={42} />
                     <Tooltip
                       labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ''}
-                      formatter={(val) => [`${formatNumber(Number(val))} kcal`, '']}
+                      formatter={(val, name) => [`${formatNumber(Number(val))} kcal`, name]}
                       contentStyle={{ border: '1px solid #e5e8df', borderRadius: 12 }}
                     />
                     <Legend />
-                    <Bar dataKey="calories" name="Intake" fill="#244c3a" radius={[7, 7, 0, 0]} maxBarSize={36} />
-                    <Line dataKey="targetCalories" name="Target" stroke="#f08a70" strokeDasharray="5 5" dot={false} strokeWidth={2} />
+                    <Bar dataKey="calories" name="Food intake" fill="#244c3a" radius={[6, 6, 0, 0]} maxBarSize={32} />
+                    <Bar dataKey="workoutCalories" name="Workouts burned" fill="#f08a70" radius={[6, 6, 0, 0]} maxBarSize={32} />
+                    <Bar dataKey="netCalories" name="Net intake" fill="#059669" radius={[6, 6, 0, 0]} maxBarSize={32} />
+                    <Line dataKey="targetCalories" name="Daily target" stroke="#b91c1c" strokeDasharray="5 5" dot={false} strokeWidth={2} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
               <EmptyState
                 icon={<ChartNoAxesColumnIncreasing size={20} />}
-                title="No nutrition records in this range"
+                title="No nutrition or workout records in this period"
                 detail={
                   isAuthenticated
-                    ? 'No confirmed meals found in this period. Log food entries in your Diary to see your trend.'
-                    : 'Log a few meals to see your personal intake trends.'
+                    ? 'No confirmed entries found. Log meals in Diary or movement in Workouts to populate your chart.'
+                    : 'Log meals or workouts to visualize your calorie trends.'
                 }
               />
             )}
             <p className="chart-footnote">
-              Historical targets use effective dates. Empty dates remain unfilled rather than fabricated.
+              Net calories = Food intake − Workout calories burned. Targets follow the historical goal effective on each date.
             </p>
           </Card>
 
-          {/* Macro Balance & Weight Charts */}
+          {/* Macro Balance & Weight Progress Charts */}
           <div className="analytics-two-col">
             <Card className="analytics-chart-card">
               <div className="card-heading">
                 <div>
-                  <p className="eyebrow">MACRO BALANCE</p>
+                  <p className="eyebrow">MACRONUTRIENT BALANCE</p>
                   <h2>Daily nutrients</h2>
                 </div>
                 <span className="quiet-note">grams</span>
@@ -1115,7 +1340,7 @@ export function AnalyticsPage() {
               ) : (
                 <EmptyState
                   title="Macro trends will grow here"
-                  detail="A few diary entries will make your personal nutrition patterns easier to see."
+                  detail="Log meals in your Diary to see your macro balance."
                 />
               )}
               <div className="chart-legend macro-legend">
@@ -1133,7 +1358,7 @@ export function AnalyticsPage() {
                   <h2>Weight progress</h2>
                 </div>
                 <StatusPill tone="neutral">
-                  {weightRows.length ? 'Your logs' : 'No records'}
+                  {weightRows.length ? 'Recorded logs' : 'No weigh-ins'}
                 </StatusPill>
               </div>
               {weightRows.length ? (
@@ -1156,7 +1381,7 @@ export function AnalyticsPage() {
                         width={40}
                       />
                       <Tooltip
-                        labelFormatter={(val) => format(parseISO(`${String(val)}T12:00:00`), 'MMM d')}
+                        labelFormatter={(val) => format(parseISO(`${String(val)}T12:00:00`), 'MMM d, yyyy')}
                         formatter={(val) => [`${Number(val).toFixed(1)} kg`, 'Weight']}
                       />
                       <Line
@@ -1172,8 +1397,8 @@ export function AnalyticsPage() {
               ) : (
                 <EmptyState
                   icon={<Scale size={20} />}
-                  title="No weight logs in this period"
-                  detail="Add weigh-ins in Weight & Goals to see your trend line."
+                  title="No weigh-ins in this period"
+                  detail="Add weigh-ins in Weight & Goals to trace your progress."
                 />
               )}
               <p className="chart-footnote">
@@ -1183,18 +1408,77 @@ export function AnalyticsPage() {
           </div>
 
           {/* ============================================================= */}
-          {/* 3. DETAILED PROGRESS & MISSING-DATA TABLES                     */}
+          {/* WEEKLY BREAKDOWN TABLE (When viewing Month)                    */}
           {/* ============================================================= */}
-          {period === 'monthly' && (
+          {period === 'monthly' && monthlyWeeksBreakdown.length > 0 && (
             <Card className="analytics-chart-card">
               <div className="card-heading">
                 <div>
-                  <p className="eyebrow">DAILY ADHERENCE BREAKDOWN</p>
-                  <h2>Days of {format(parseISO(`${selectedMonth}-01T12:00:00`), 'MMMM yyyy')}</h2>
+                  <p className="eyebrow">MONTHLY BREAKDOWN</p>
+                  <h2>Weekly progression in {format(parseISO(`${selectedMonth}-01T12:00:00`), 'MMMM yyyy')}</h2>
                 </div>
-                <span className="quiet-note">
-                  {totalEntriesCount} {totalEntriesCount === 1 ? 'confirmed meal' : 'confirmed meals'} logged
-                </span>
+                <span className="quiet-note">{monthlyWeeksBreakdown.length} weekly segments</span>
+              </div>
+              <div className="analytics-table-wrap">
+                <table className="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>Segment</th>
+                      <th>Food Intake</th>
+                      <th>Workout Burned</th>
+                      <th>Net Intake</th>
+                      <th>Workouts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyWeeksBreakdown.map((wb) => (
+                      <tr key={wb.label}>
+                        <td><strong>{wb.label}</strong></td>
+                        <td>{formatNumber(wb.food)} kcal</td>
+                        <td>{formatNumber(wb.burned)} kcal</td>
+                        <td>
+                          <span style={{ color: wb.net > 0 ? '#244c3a' : '#15803d', fontWeight: 600 }}>
+                            {formatNumber(wb.net)} kcal
+                          </span>
+                        </td>
+                        <td>{wb.workouts} {wb.workouts === 1 ? 'session' : 'sessions'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* Day-by-Day Adherence Table for Weekly & Monthly */}
+          {(period === 'weekly' || period === 'monthly') && (
+            <Card className="analytics-chart-card">
+              <div className="card-heading">
+                <div>
+                  <p className="eyebrow">DAILY AUDIT TABLE</p>
+                  <h2>Detailed day-by-day record</h2>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="quiet-note">
+                    {loggedDays} of {rangeDays} days logged
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '12px', color: '#657363', fontWeight: 600 }}>Show:</span>
+                    <select
+                      className="audit-page-size-select"
+                      value={auditPageSize}
+                      onChange={(e) => {
+                        setAuditPageSize(Number(e.target.value));
+                        setAuditPage(1);
+                      }}
+                      aria-label="Daily audit rows per page"
+                    >
+                      <option value={7}>7 days</option>
+                      <option value={14}>14 days</option>
+                      <option value={31}>All days</option>
+                    </select>
+                  </div>
+                </div>
               </div>
               <div className="analytics-table-wrap">
                 <table className="analytics-table">
@@ -1202,106 +1486,94 @@ export function AnalyticsPage() {
                     <tr>
                       <th>Date</th>
                       <th>Status</th>
-                      <th>Intake</th>
+                      <th>Food Intake</th>
+                      <th>Workout Burned</th>
+                      <th>Net Intake</th>
                       <th>Target</th>
-                      <th>Difference</th>
-                      <th>Confirmed Foods</th>
+                      <th>Food vs Target</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {chartRows.map((row) => {
-                      const isLogged = row.logged;
-                      const diff = isLogged ? row.calories - row.targetCalories : null;
-                      return (
-                        <tr key={row.date}>
-                          <td><strong>{row.fullLabel}</strong></td>
-                          <td>
-                            {!isLogged ? (
-                              <StatusPill tone="neutral">Not logged</StatusPill>
-                            ) : diff !== null && diff <= 0 ? (
-                              <StatusPill tone="success">Under target</StatusPill>
-                            ) : (
-                              <StatusPill tone="warning">Above target</StatusPill>
-                            )}
-                          </td>
-                          <td>{isLogged ? `${formatNumber(row.calories)} kcal` : '—'}</td>
-                          <td>{formatNumber(row.targetCalories)} kcal</td>
-                          <td>
-                            {diff !== null ? (
-                              <span style={{ color: diff <= 0 ? '#244c3a' : '#b54842', fontWeight: 600 }}>
-                                {diff <= 0 ? '' : '+'}{formatNumber(diff)} kcal
-                              </span>
-                            ) : '—'}
-                          </td>
-                          <td>{row.entryCount ? `${row.entryCount} entries` : '—'}</td>
-                        </tr>
-                      );
-                    })}
+                    {paginatedAuditRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ textAlign: 'center', padding: '24px', color: '#657363' }}>
+                          No records found for this period.
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedAuditRows.map((row) => {
+                        const isLogged = row.logged;
+                        const foodDiff = isLogged ? row.calories - row.targetCalories : null;
+                        return (
+                          <tr key={row.date}>
+                            <td><strong>{row.fullLabel}</strong></td>
+                            <td>
+                              {!isLogged ? (
+                                <StatusPill tone="neutral">Not logged</StatusPill>
+                              ) : foodDiff !== null && foodDiff <= 0 ? (
+                                <StatusPill tone="success">Under target</StatusPill>
+                              ) : (
+                                <StatusPill tone="warning">Above target</StatusPill>
+                              )}
+                            </td>
+                            <td>{isLogged ? `${formatNumber(row.calories)} kcal` : '—'}</td>
+                            <td>{row.workoutCalories > 0 ? `${formatNumber(row.workoutCalories)} kcal` : '—'}</td>
+                            <td>
+                              {isLogged ? (
+                                <span style={{ fontWeight: 600, color: '#244c3a' }}>
+                                  {formatNumber(row.netCalories)} kcal
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td>{formatNumber(row.targetCalories)} kcal</td>
+                            <td>
+                              {foodDiff !== null ? (
+                                <span style={{ color: foodDiff <= 0 ? '#15803d' : '#b54842', fontWeight: 600 }}>
+                                  {foodDiff <= 0 ? '' : '+'}{formatNumber(foodDiff)} kcal
+                                </span>
+                              ) : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
-            </Card>
-          )}
 
-          {period === 'yearly' && (
-            <Card className="analytics-chart-card">
-              <div className="card-heading">
-                <div>
-                  <p className="eyebrow">ANNUAL 12-MONTH OVERVIEW</p>
-                  <h2>Progress &amp; consistency across {selectedYear}</h2>
+              {/* Pagination controls */}
+              {totalAuditPages > 1 && (
+                <div className="audit-pagination-bar">
+                  <span className="audit-pagination-info">
+                    Showing <strong>{auditStartIndex + 1}–{auditEndIndex}</strong> of <strong>{totalAuditRows}</strong> days
+                  </span>
+                  <div className="audit-pagination-actions">
+                    <button
+                      type="button"
+                      className="nav-arrow-btn"
+                      onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                      disabled={currentAuditPage <= 1}
+                      title="Previous page"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span className="audit-page-number">
+                      Page <strong>{currentAuditPage}</strong> of <strong>{totalAuditPages}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      className="nav-arrow-btn"
+                      onClick={() => setAuditPage((p) => Math.min(totalAuditPages, p + 1))}
+                      disabled={currentAuditPage >= totalAuditPages}
+                      title="Next page"
+                      aria-label="Next page"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
                 </div>
-                <span className="quiet-note">{logDays} of 365 days logged</span>
-              </div>
-              <div className="analytics-table-wrap">
-                <table className="analytics-table">
-                  <thead>
-                    <tr>
-                      <th>Month</th>
-                      <th>Logging Consistency</th>
-                      <th>Missing Data Indicator</th>
-                      <th>Avg Daily Calories</th>
-                      <th>Daily Target</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {chartRows.map((m) => {
-                      const loggedPct = m.calendarDays ? Math.round(((m.loggedDays ?? 0) / m.calendarDays) * 100) : 0;
-                      const isUnlogged = (m.loggedDays ?? 0) === 0;
-
-                      return (
-                        <tr key={m.date}>
-                          <td><strong>{m.fullLabel}</strong></td>
-                          <td>
-                            <div className="table-bar-track">
-                              <div
-                                className="table-bar-fill"
-                                style={{
-                                  width: `${loggedPct}%`,
-                                  background: loggedPct > 60 ? '#244c3a' : loggedPct > 0 ? '#e4a34a' : '#eef2eb',
-                                }}
-                              />
-                            </div>
-                            <span style={{ fontSize: '11px', color: '#6d776b' }}>
-                              {m.loggedDays ?? 0} / {m.calendarDays} days ({loggedPct}%)
-                            </span>
-                          </td>
-                          <td>
-                            {isUnlogged ? (
-                              <StatusPill tone="neutral">No records</StatusPill>
-                            ) : m.missingDays && m.missingDays > 0 ? (
-                              <StatusPill tone="warning">{m.missingDays} unlogged days</StatusPill>
-                            ) : (
-                              <StatusPill tone="success">Fully logged</StatusPill>
-                            )}
-                          </td>
-                          <td>{m.calories > 0 ? `${formatNumber(m.calories)} kcal/day` : '—'}</td>
-                          <td>{formatNumber(m.targetCalories)} kcal</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              )}
             </Card>
           )}
         </>

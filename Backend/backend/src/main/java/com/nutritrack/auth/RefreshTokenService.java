@@ -113,7 +113,7 @@ public class RefreshTokenService {
                     return new Rotation(t.getUserId(), successorToken);
                 }
 
-                // Recorded rotation exists (in DB or memory) from a DIFFERENT client proof -> confirmed live theft replay attack!
+                // Recorded rotation exists (in DB or memory) from a DIFFERENT or forged client proof -> confirmed live theft replay attack!
                 repo.revokeAllForUser(t.getUserId(), now);
                 activeRotations.remove(tokenHash);
                 throw ApiException.unauthorized("TOKEN_THEFT_DETECTED", "Suspicious token reuse detected");

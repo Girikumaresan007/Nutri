@@ -109,6 +109,33 @@ export function AppShell() {
         </NavLink>)}
       </nav>
       <div className="sidebar-bottom">
+        {canInstall && (
+          <button
+            type="button"
+            className="sidebar-install-btn"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              background: 'rgba(36, 76, 58, 0.08)',
+              color: '#244c3a',
+              border: '1px solid rgba(36, 76, 58, 0.2)',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              marginBottom: '8px',
+              width: '100%',
+              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+            }}
+            onClick={() => void promptPwaInstall()}
+            title="Install NutriTrack App on device"
+          >
+            <Download size={15} />
+            {!sidebarCollapsed && <span>Install App</span>}
+          </button>
+        )}
         <div className="sidebar-tip"><span className="tip-leaf"><Leaf size={15} /></span><p><strong>Small steps add up.</strong><span>Stay curious about your habits.</span></p></div>
         <div
           className="sidebar-account"

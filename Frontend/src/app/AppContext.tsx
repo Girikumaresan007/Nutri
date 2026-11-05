@@ -303,8 +303,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const restoreSessionAndSync = useCallback(async (forceProbe = false) => {
     const hint = getStoredSessionHint();
     if (!hint && !forceProbe) {
-      // First-time load or logged-out guest: load local data without blocking on cloud refresh
+      // First-time load or guests: load local data immediately without UI blocking
       setData(repository.load() ?? emptyAppData);
+      // Quietly probe backend once in background to restore session if a valid HttpOnly refresh cookie exists
+      try {
+        const result = await authApi.restoreSession();
+        if (result.status === 'SUCCESS') {
+          const user = result.data.user;
+          setCurrentUser(user);
+          saveSessionHint({ name: user.name, email: user.email });
+          setAuthStatus('AUTHENTICATED');
+          void Promise.allSettled([
+            refreshProfileAndGoals(),
+            refreshFoodAndSummary(selectedDate),
+            refreshWorkouts(),
+            refreshWeights(),
+          ]);
+          return;
+        }
+      } catch {
+        // Silently preserve guest mode if backend is unreachable or cookie absent
+      }
       setAuthStatus('UNAUTHENTICATED');
       return;
     }
@@ -346,7 +365,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         pushToast({
           tone: 'error',
           title: 'Cloud connection unavailable',
-          detail: 'Unable to reach health server. Tap Retry Connection when ready.',
+          detail: 'Unable to reach health server. Tap Reconnect when ready.',
         });
       }
     } catch {
@@ -359,10 +378,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
-    const hint = getStoredSessionHint();
-    if (hint) {
-      void restoreSessionAndSync();
-    }
+    void restoreSessionAndSync();
   }, [restoreSessionAndSync]);
 
   // Hook global session expiration handler (only for genuine 401s when authenticated)

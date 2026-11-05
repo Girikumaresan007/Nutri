@@ -83,10 +83,13 @@ const CSRF_HEADER_VALUE = 'NutriTrack';
 
 const CLIENT_PROOF_HEADER_NAME = 'X-Client-Proof';
 
+let inMemoryClientProof: string | null = null;
+
 // Persistent client/device proof — random UUID generated once per browser profile.
 // Note: This is an opaque entropy identifier for rotation binding and contains ZERO tokens or credentials.
 export function getClientProof(): string {
   if (typeof window === 'undefined') return 'server-side';
+  if (inMemoryClientProof) return inMemoryClientProof;
   try {
     const key = 'nt_device_session_proof';
     let proof = localStorage.getItem(key);
@@ -96,9 +99,13 @@ export function getClientProof(): string {
         : 'dev_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
       localStorage.setItem(key, proof);
     }
+    inMemoryClientProof = proof;
     return proof;
   } catch {
-    return 'ephemeral_' + Math.random().toString(36).substring(2);
+    if (!inMemoryClientProof) {
+      inMemoryClientProof = 'ephemeral_' + Math.random().toString(36).substring(2);
+    }
+    return inMemoryClientProof;
   }
 }
 
@@ -156,7 +163,7 @@ export async function performRefresh(attempt = 1): Promise<RefreshResult> {
 
   activeRefreshPromise = (async (): Promise<RefreshResult> => {
     const url = `${BASE_URL}/api/v1/auth/refresh`;
-    const maxAttempts = 2;
+    const maxAttempts = 3;
 
     for (let currentAttempt = attempt; currentAttempt <= maxAttempts; currentAttempt++) {
       const { signal, cleanup } = createTimeoutSignal(45000);
@@ -179,9 +186,9 @@ export async function performRefresh(attempt = 1): Promise<RefreshResult> {
           return { status: 'UNAUTHENTICATED', error: 'Session expired or unauthenticated.' };
         }
 
-        // 502/503/504 can happen during Render container cold starts: retry once
+        // 502/503/504 can happen during Render container cold starts: retry with backoff
         if ((response.status === 502 || response.status === 503 || response.status === 504) && currentAttempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, currentAttempt * 2500));
           continue;
         }
 
@@ -199,9 +206,9 @@ export async function performRefresh(attempt = 1): Promise<RefreshResult> {
         return { status: 'UNAUTHENTICATED', error: 'Missing access token in response.' };
       } catch (err: unknown) {
         cleanup();
-        // If it was a network error or timeout during a Render cold start, retry once
+        // If it was a network error or timeout during a Render cold start, retry with backoff
         if (currentAttempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 2500));
+          await new Promise((r) => setTimeout(r, currentAttempt * 2500));
           continue;
         }
         // Network failure (offline / timeout) — PRESERVE SESSION STATE, do not treat as auth revocation

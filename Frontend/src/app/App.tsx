@@ -5,13 +5,36 @@ import { AppShell } from '@/app/AppShell';
 import { useApp } from '@/app/AppContext';
 import { SplashScreen } from '@/components/SplashScreen';
 
-const DashboardPage = lazy(() => import('@/features/dashboard/DashboardPage').then((module) => ({ default: module.DashboardPage })));
-const DiaryPage = lazy(() => import('@/features/diary/DiaryPage').then((module) => ({ default: module.DiaryPage })));
-const ScannerPage = lazy(() => import('@/features/scanner/ScannerPage').then((module) => ({ default: module.ScannerPage })));
-const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage').then((module) => ({ default: module.AnalyticsPage })));
-const WorkoutsPage = lazy(() => import('@/features/workouts/WorkoutsPage').then((module) => ({ default: module.WorkoutsPage })));
-const GoalsPage = lazy(() => import('@/features/goals/GoalsPage').then((module) => ({ default: module.GoalsPage })));
-const ProfilePage = lazy(() => import('@/features/profile/ProfilePage').then((module) => ({ default: module.ProfilePage })));
+// Safe chunk dynamic loader with single-reload auto-recovery from stale deployment hashes
+function lazyWithRetry<T extends React.ComponentType<unknown>>(
+  factory: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    try {
+      const component = await factory();
+      window.sessionStorage.removeItem('nt_chunk_reload_lock');
+      return component;
+    } catch (error) {
+      const hasRetried = window.sessionStorage.getItem('nt_chunk_reload_lock');
+      if (!hasRetried) {
+        window.sessionStorage.setItem('nt_chunk_reload_lock', 'true');
+        console.warn('[NutriTrack] Stale chunk detected; reloading latest application version...');
+        window.location.reload();
+        return new Promise<{ default: T }>(() => {});
+      }
+      window.sessionStorage.removeItem('nt_chunk_reload_lock');
+      throw error;
+    }
+  });
+}
+
+const DashboardPage = lazyWithRetry(() => import('@/features/dashboard/DashboardPage').then((module) => ({ default: module.DashboardPage })));
+const DiaryPage = lazyWithRetry(() => import('@/features/diary/DiaryPage').then((module) => ({ default: module.DiaryPage })));
+const ScannerPage = lazyWithRetry(() => import('@/features/scanner/ScannerPage').then((module) => ({ default: module.ScannerPage })));
+const AnalyticsPage = lazyWithRetry(() => import('@/features/analytics/AnalyticsPage').then((module) => ({ default: module.AnalyticsPage })));
+const WorkoutsPage = lazyWithRetry(() => import('@/features/workouts/WorkoutsPage').then((module) => ({ default: module.WorkoutsPage })));
+const GoalsPage = lazyWithRetry(() => import('@/features/goals/GoalsPage').then((module) => ({ default: module.GoalsPage })));
+const ProfilePage = lazyWithRetry(() => import('@/features/profile/ProfilePage').then((module) => ({ default: module.ProfilePage })));
 
 function RouteLoading() {
   return <div className="route-loading" role="status"><span /><p>Loading your space…</p></div>;
